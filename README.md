@@ -160,6 +160,8 @@ The JSON returned by RoamSwitch's diagnostic tools is the actual contract betwee
 
 [AGENTS.md](AGENTS.md) has the exact API surface in a compact, machine-oriented format — point Claude Code, Cursor, Copilot, etc. at it when integrating this package to avoid hallucinated method/field names.
 
+This is picked up automatically only if your assistant is working directly inside this repository. If you've added RoamSwitchKit as a dependency in a different project, your assistant won't discover it on its own — paste this URL when asking it to integrate the package: `https://github.com/lafine1211/RoamSwitchKit/blob/main/AGENTS.md`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
