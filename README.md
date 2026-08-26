@@ -156,6 +156,10 @@ All cases conform to `LocalizedError`, so `error.localizedDescription` gives a h
 
 The JSON returned by RoamSwitch's diagnostic tools is the actual contract between this package and the app. `Sources/RoamSwitchKit/Models.swift` mirrors that shape independently — RoamSwitchKit is a separate, public repository from the private RoamSwitch app repo, so it can't share Swift types directly. If a future RoamSwitch release changes the response shape, this package's models are updated to match in lockstep; pin a version if that matters to you.
 
+## For AI coding assistants
+
+[AGENTS.md](AGENTS.md) has the exact API surface in a compact, machine-oriented format — point Claude Code, Cursor, Copilot, etc. at it when integrating this package to avoid hallucinated method/field names.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
