@@ -166,6 +166,6 @@ do {
 
 ## Performance notes for generated code
 
-Each call spawns a subprocess and exits it — there is no way to keep a connection warm, and none is needed for occasional queries. Do not call these methods in a tight loop or a per-frame/per-keystroke handler. `exposedPorts()` is the slowest of the three (each externally-exposed port is individually probed) and can take a few seconds if several ports are open; don't call it on a UI thread expecting an instant result — it's already `async`, so `await` it from a `Task`, not synchronously.
+Each call spawns a subprocess and exits it — there is no way to keep a connection warm, and none is needed for occasional queries. Do not call these methods in a tight loop or a per-frame/per-keystroke handler. `exposedPorts()` is the slowest of these (each externally-exposed port is individually probed) and can take a few seconds if several ports are open; don't call it on a UI thread expecting an instant result — it's already `async`, so `await` it from a `Task`, not synchronously.
 
 `RoamSwitchClient` is an `actor`; calls on one instance run one at a time. Creating a new instance per call is cheap and safe (it only resolves the app path); reusing one instance is also fine.

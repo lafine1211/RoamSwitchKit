@@ -147,6 +147,21 @@ public actor RoamSwitchClient {
 
 `GuardEntry`: `key: String`, `enabledInSettings: Bool`.
 
+### `LinkAuditReport`
+
+| Field | Type | Description |
+|---|---|---|
+| `originalURL` | `String` | The URL as passed in |
+| `finalURL` | `String` | The URL after following any redirects |
+| `redirectChain` | `[String]` | Every URL hop between `originalURL` and `finalURL` |
+| `domain` | `String` | The final destination's domain |
+| `score` | `Int` | 0–100 (100 = safe, below 50 = dangerous) |
+| `riskLevel` | `String` | `"safe"` / `"caution"` / `"dangerous"` |
+| `isHTTPS` | `Bool` | Whether the final URL uses HTTPS |
+| `riskFactors` | `[LinkRiskFactor]` | Specific findings — Unicode homograph spoofing, brand-name subdomain deception, high-risk TLDs, plaintext HTTP, etc. |
+
+`LinkRiskFactor`: `title`, `detail`, `isSevere: Bool`.
+
 ### `RoamSwitchClientError`
 
 | Case | Meaning |
