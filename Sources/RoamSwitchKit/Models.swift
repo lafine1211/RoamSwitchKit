@@ -63,3 +63,21 @@ public struct GuardStatus: Codable, Equatable, Sendable {
     public let guards: [GuardEntry]
     public let caveats: [String]
 }
+
+
+public struct LinkRiskFactor: Codable, Equatable, Sendable {
+    public let title: String
+    public let detail: String
+    public let isSevere: Bool
+}
+
+public struct LinkAuditReport: Codable, Equatable, Sendable {
+    public let originalURL: String
+    public let finalURL: String
+    public let redirectChain: [String]
+    public let domain: String
+    public let score: Int
+    public let riskLevel: String
+    public let isHTTPS: Bool
+    public let riskFactors: [LinkRiskFactor]
+}

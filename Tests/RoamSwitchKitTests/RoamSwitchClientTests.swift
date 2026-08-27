@@ -9,6 +9,10 @@ import XCTest
 /// skip rather than fail.
 final class RoamSwitchClientTests: XCTestCase {
     private func makeClientOrSkip() throws -> RoamSwitchClient {
+        let debugDerivedBinary = "/Users/tetsuharu/Library/Developer/Xcode/DerivedData/RoamSwitch-bzvrkxawectksnaiivrtzlqulvok/Build/Products/Debug/RoamSwitchMCPServer"
+        if FileManager.default.isExecutableFile(atPath: debugDerivedBinary) {
+            return try RoamSwitchClient(executableURL: URL(fileURLWithPath: debugDerivedBinary))
+        }
         do {
             return try RoamSwitchClient()
         } catch RoamSwitchClientError.appNotInstalled, RoamSwitchClientError.serverBinaryNotFound {
@@ -44,7 +48,15 @@ final class RoamSwitchClientTests: XCTestCase {
     func testGuardStatus() async throws {
         let client = try makeClientOrSkip()
         let status = try await client.guardStatus()
-        XCTAssertEqual(status.guards.count, 4)
+        XCTAssertGreaterThanOrEqual(status.guards.count, 6)
         XCTAssertFalse(status.activeSecurityLevel.isEmpty)
+    }
+
+    func testAuditURLSafety() async throws {
+        let client = try makeClientOrSkip()
+        let report = try await client.auditURLSafety(url: "https://apple.com.login-verify.xyz")
+        XCTAssertEqual(report.domain, "apple.com.login-verify.xyz")
+        XCTAssertEqual(report.riskLevel, "dangerous")
+        XCTAssertFalse(report.riskFactors.isEmpty)
     }
 }

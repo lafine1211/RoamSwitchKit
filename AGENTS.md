@@ -35,6 +35,7 @@ public actor RoamSwitchClient {
     public func securityReport() async throws -> SecurityReport
     public func exposedPorts(includeLocalOnly: Bool = false) async throws -> ExposedPorts
     public func guardStatus() async throws -> GuardStatus
+    public func auditURLSafety(url: String) async throws -> LinkAuditReport
 }
 ```
 
@@ -109,8 +110,29 @@ public struct GuardStatus: Codable, Equatable, Sendable {
 
 public struct GuardEntry: Codable, Equatable, Sendable {
     public let key: String
-    public let enabledInSettings: Bool
+    public let enabledInSettings: Bool  // keys: portAnomalyGuard, arpSpoofAutoContainment, usbStorageGuard, bluetoothGuard, webMailDownloadGuard, dnsThreatGuard
 }
+
+### `LinkAuditReport`
+
+```swift
+public struct LinkAuditReport: Codable, Equatable, Sendable {
+    public let originalURL: String
+    public let finalURL: String
+    public let redirectChain: [String]
+    public let domain: String
+    public let score: Int              // 0-100 (100 = safe, <50 = dangerous)
+    public let riskLevel: String       // "safe" | "caution" | "dangerous"
+    public let isHTTPS: Bool
+    public let riskFactors: [LinkRiskFactor]
+}
+
+public struct LinkRiskFactor: Codable, Equatable, Sendable {
+    public let title: String
+    public let detail: String
+    public let isSevere: Bool
+}
+```
 ```
 
 ### `RoamSwitchClientError`

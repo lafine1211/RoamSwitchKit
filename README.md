@@ -67,9 +67,14 @@ for port in ports.ports where port.overallRisk == "high" {
 // and whether the current network is in the user's trusted list.
 let status = try await client.guardStatus()
 print(status.activeSecurityLevelLabel, status.isCurrentNetworkTrusted)
+
+// Inspect email links, shortened URLs, or suspicious web domains for
+// phishing, Unicode homograph spoofing, and brand imitation (Zero Telemetry).
+let urlReport = try await client.auditURLSafety(url: "https://apple.com.login-verify.xyz")
+print(urlReport.score, urlReport.riskLevel) // e.g. 20, "dangerous"
 ```
 
-All three calls are `async throws` and can fail with `RoamSwitchClientError` — most commonly `.appNotInstalled` if RoamSwitch isn't present. Handle that case gracefully (e.g. hide the feature, or point the user to lafine.net) rather than treating it as fatal.
+All calls are `async throws` and can fail with `RoamSwitchClientError` — most commonly `.appNotInstalled` if RoamSwitch isn't present. Handle that case gracefully (e.g. hide the feature, or point the user to lafine.net) rather than treating it as fatal.
 
 ## How it works
 
@@ -95,13 +100,16 @@ public actor RoamSwitchClient {
     public func securityReport() async throws -> SecurityReport
     public func exposedPorts(includeLocalOnly: Bool = false) async throws -> ExposedPorts
     public func guardStatus() async throws -> GuardStatus
+    public func auditURLSafety(url: String) async throws -> LinkAuditReport
 }
 ```
 
 - `init(appBundleID:)` — resolves and validates the RoamSwitch install. Override `appBundleID` only for testing against a differently-identified build.
+- `init(executableURL:)` — directly targets a specific `RoamSwitchMCPServer` binary (useful for debugging, testing, or non-standard install paths).
 - `securityReport()` — runs RoamSwitch's full local Mac security audit.
 - `exposedPorts(includeLocalOnly:)` — lists listening TCP ports. Ports exposed beyond localhost are always fully audited; pass `includeLocalOnly: true` to also include localhost-only ports (returned without the slower per-port audit).
 - `guardStatus()` — current active security level, trusted-network status, and each optional guard's on/off state.
+- `auditURLSafety(url:)` — analyzes an email link or web URL for phishing threats, Unicode homograph spoofing, brand subdomain deception, and high-risk TLDs (Zero Telemetry).
 
 ### `SecurityReport`
 
@@ -134,7 +142,7 @@ public actor RoamSwitchClient {
 | `activeSecurityLevel` | `String` | Raw level identifier (`"open"` / `"balanced"` / `"lockdown"`) |
 | `activeSecurityLevelLabel` | `String` | Localized display name |
 | `isCurrentNetworkTrusted` | `Bool` | Whether the current gateway matches a saved trusted network |
-| `guards` | `[GuardEntry]` | One entry per optional guard: `portAnomalyGuard`, `arpSpoofAutoContainment`, `usbStorageGuard`, `bluetoothGuard` |
+| `guards` | `[GuardEntry]` | One entry per optional guard: `portAnomalyGuard`, `arpSpoofAutoContainment`, `usbStorageGuard`, `bluetoothGuard`, `webMailDownloadGuard`, `dnsThreatGuard` |
 | `caveats` | `[String]` | Notes — in particular, that `enabledInSettings` reflects the Settings toggle only; actual guard behavior also depends on RoamSwitch Pro license state, which this tool (running as a separate process) can't verify |
 
 `GuardEntry`: `key: String`, `enabledInSettings: Bool`.

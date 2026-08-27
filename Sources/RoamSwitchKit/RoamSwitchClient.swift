@@ -22,6 +22,11 @@ public actor RoamSwitchClient {
     ///   bundle ID is registered with Launch Services, or
     ///   `.serverBinaryNotFound` if the app is installed but predates 1.3.0.
     public init(appBundleID: String = "com.tetsuharu.RoamSwitch") throws {
+        if let envPath = ProcessInfo.processInfo.environment["ROAMSWITCH_SERVER_PATH"],
+           FileManager.default.isExecutableFile(atPath: envPath) {
+            self.executableURL = URL(fileURLWithPath: envPath)
+            return
+        }
         guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID) else {
             throw RoamSwitchClientError.appNotInstalled
         }
@@ -30,6 +35,13 @@ public actor RoamSwitchClient {
             throw RoamSwitchClientError.serverBinaryNotFound
         }
         self.executableURL = binaryURL
+    }
+
+    public init(executableURL: URL) throws {
+        guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
+            throw RoamSwitchClientError.serverBinaryNotFound
+        }
+        self.executableURL = executableURL
     }
 
     /// Runs RoamSwitch's full local Mac security audit (FileVault, SIP,
@@ -59,5 +71,16 @@ public actor RoamSwitchClient {
         let result = try JSONRPCTransport(executableURL: executableURL)
             .callTool(name: "get_guard_status", arguments: [:])
         return try JSONRPCTransport.decodeContent(GuardStatus.self, from: result)
+    }
+
+    /// Analyzes an email link or web URL for phishing threats, Unicode
+    /// homograph spoofing, brand subdomain deception, and high-risk TLDs
+    /// without sending any data to external servers (Zero Telemetry).
+    ///
+    /// - Parameter url: The URL string to inspect.
+    public func auditURLSafety(url: String) async throws -> LinkAuditReport {
+        let result = try JSONRPCTransport(executableURL: executableURL)
+            .callTool(name: "audit_url_safety", arguments: ["url": url])
+        return try JSONRPCTransport.decodeContent(LinkAuditReport.self, from: result)
     }
 }
