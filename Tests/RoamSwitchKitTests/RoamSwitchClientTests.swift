@@ -26,6 +26,39 @@ final class RoamSwitchClientTests: XCTestCase {
         }
     }
 
+    /// A subprocess that exits immediately (so the write end of our stdin
+    /// pipe breaks mid-handshake) must surface as a thrown error, never an
+    /// uncatchable Objective-C exception that aborts the host process.
+    func testImmediatelyExitingBinaryThrowsRatherThanCrashing() async throws {
+        let client = try RoamSwitchClient(executableURL: URL(fileURLWithPath: "/usr/bin/false"))
+        do {
+            _ = try await client.securityReport()
+            XCTFail("expected an error")
+        } catch let error as RoamSwitchClientError {
+            XCTAssertEqual(error, .noResponse)
+        }
+    }
+
+    /// A subprocess that never answers is terminated at the timeout and
+    /// reported as `.timedOut`, not left hanging forever.
+    func testHangingBinaryTimesOut() async throws {
+        let script = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("roamswitchkit-hang-\(UUID().uuidString).sh")
+        try "#!/bin/sh\nsleep 30\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        defer { try? FileManager.default.removeItem(at: script) }
+
+        let client = try RoamSwitchClient(executableURL: script, timeout: 0.5)
+        let start = Date()
+        do {
+            _ = try await client.guardStatus()
+            XCTFail("expected a timeout")
+        } catch let error as RoamSwitchClientError {
+            XCTAssertEqual(error, .timedOut)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 10, "should have given up near the 0.5s timeout")
+    }
+
     func testSecurityReport() async throws {
         let client = try makeClientOrSkip()
         let report = try await client.securityReport()

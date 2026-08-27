@@ -5,8 +5,21 @@ import Foundation
 /// RoamSwitchMCPServer/main.swift in the main app repo). Launches a fresh
 /// subprocess per call — stateless, matches the server's own
 /// no-side-effects, nothing-persists design.
-struct JSONRPCTransport {
+///
+/// All I/O here is synchronous and blocking; `RoamSwitchClient` is
+/// responsible for running `callTool` off the Swift Concurrency cooperative
+/// pool so a slow scan can't stall unrelated `async` work.
+struct JSONRPCTransport: Sendable {
     let executableURL: URL
+    /// Wall-clock ceiling for the whole exchange. If the server hasn't
+    /// answered by then it is terminated and `callTool` throws `.timedOut`,
+    /// rather than blocking the caller indefinitely.
+    let timeout: TimeInterval
+
+    init(executableURL: URL, timeout: TimeInterval = 30) {
+        self.executableURL = executableURL
+        self.timeout = timeout
+    }
 
     private static let initializeID = 1
     private static let toolCallID = 2
@@ -19,14 +32,33 @@ struct JSONRPCTransport {
         let stdoutPipe = Pipe()
         process.standardInput = stdinPipe
         process.standardOutput = stdoutPipe
-        process.standardError = Pipe() // discard; nothing we can act on
+        // Genuinely discard stderr. A bare `Pipe()` here would *buffer* the
+        // server's stderr (e.g. its startup NSUserDefaults warning) with no
+        // reader draining it — once that 64 KB pipe buffer filled, the server
+        // would block on `write(2)` and this exchange would deadlock.
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
         } catch {
             throw RoamSwitchClientError.processLaunchFailed(underlying: error)
         }
+
+        // Watchdog: if the exchange overruns `timeout`, kill the subprocess.
+        // That collapses the blocking read below to EOF, and the `didTimeOut`
+        // flag lets us report it as `.timedOut` rather than `.noResponse`.
+        let stateLock = NSLock()
+        var didTimeOut = false
+        let watchdog = DispatchWorkItem {
+            stateLock.lock()
+            didTimeOut = true
+            stateLock.unlock()
+            process.terminate()
+        }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout, execute: watchdog)
+
         defer {
+            watchdog.cancel()
             if process.isRunning {
                 process.terminate()
             }
@@ -35,26 +67,38 @@ struct JSONRPCTransport {
         let stdin = stdinPipe.fileHandleForWriting
         let stdout = stdoutPipe.fileHandleForReading
 
-        try writeLine(["jsonrpc": "2.0", "id": Self.initializeID, "method": "initialize", "params": [
-            "protocolVersion": "2025-06-18",
-            "capabilities": [String: Any](),
-            "clientInfo": ["name": "RoamSwitchKit", "version": "1.0.0"],
-        ]], to: stdin)
+        func timedOut() -> Bool {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return didTimeOut
+        }
 
-        try writeLine(["jsonrpc": "2.0", "method": "notifications/initialized"], to: stdin)
+        do {
+            try writeLine(["jsonrpc": "2.0", "id": Self.initializeID, "method": "initialize", "params": [
+                "protocolVersion": "2025-06-18",
+                "capabilities": [String: Any](),
+                "clientInfo": ["name": "RoamSwitchKit", "version": RoamSwitchKitVersion.current],
+            ]], to: stdin)
 
-        try writeLine(["jsonrpc": "2.0", "id": Self.toolCallID, "method": "tools/call", "params": [
-            "name": name,
-            "arguments": arguments,
-        ]], to: stdin)
+            try writeLine(["jsonrpc": "2.0", "method": "notifications/initialized"], to: stdin)
 
-        // Everything we're going to say has been said — closing our end of
-        // stdin lets the server's `while let line = readLine()` loop reach
-        // EOF and exit cleanly once it's drained the buffered requests.
-        try? stdin.close()
+            try writeLine(["jsonrpc": "2.0", "id": Self.toolCallID, "method": "tools/call", "params": [
+                "name": name,
+                "arguments": arguments,
+            ]], to: stdin)
 
-        guard let responseData = try readLine(from: stdout, matchingID: Self.toolCallID) else {
-            throw RoamSwitchClientError.noResponse
+            // Everything we're going to say has been said — closing our end of
+            // stdin lets the server's `while let line = readLine()` loop reach
+            // EOF and exit cleanly once it's drained the buffered requests.
+            try? stdin.close()
+        } catch {
+            // A broken pipe here means the server exited before it could read
+            // the request — treat it the same as an empty response.
+            throw timedOut() ? RoamSwitchClientError.timedOut : RoamSwitchClientError.noResponse
+        }
+
+        guard let responseData = try readResponseLine(from: stdout, matchingID: Self.toolCallID) else {
+            throw timedOut() ? RoamSwitchClientError.timedOut : RoamSwitchClientError.noResponse
         }
 
         guard let message = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any] else {
@@ -91,18 +135,29 @@ struct JSONRPCTransport {
 
     private func writeLine(_ object: [String: Any], to handle: FileHandle) throws {
         let data = try JSONSerialization.data(withJSONObject: object)
-        handle.write(data)
-        handle.write(Data([0x0A]))
+        // `write(contentsOf:)` *throws* on a broken pipe; the older
+        // `write(_ data: Data)` raises an uncatchable Objective-C exception
+        // that would abort the host process instead.
+        try handle.write(contentsOf: data)
+        try handle.write(contentsOf: Data([0x0A]))
     }
 
     /// Reads newline-delimited JSON-RPC messages from `handle`, discarding
     /// any whose "id" doesn't match `id` (e.g. the initialize response),
     /// until the matching line is found or the pipe reaches EOF.
-    private func readLine(from handle: FileHandle, matchingID id: Int) throws -> Data? {
+    private func readResponseLine(from handle: FileHandle, matchingID id: Int) throws -> Data? {
         var buffer = Data()
         while true {
-            let chunk = handle.availableData
-            if chunk.isEmpty {
+            // `read(upToCount:)` throws on error; `availableData` would raise
+            // an uncatchable Objective-C exception instead. An empty/nil
+            // return means EOF.
+            let chunk: Data?
+            do {
+                chunk = try handle.read(upToCount: 64 * 1024)
+            } catch {
+                return nil // treat a read error the same as EOF-before-response
+            }
+            guard let chunk, !chunk.isEmpty else {
                 return nil // EOF before we saw our response
             }
             buffer.append(chunk)

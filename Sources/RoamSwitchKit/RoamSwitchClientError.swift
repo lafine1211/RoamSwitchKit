@@ -19,6 +19,10 @@ public enum RoamSwitchClientError: Error, LocalizedError, Sendable, Equatable {
     /// to our request.
     case noResponse
 
+    /// The subprocess didn't respond within the client's `timeout` and was
+    /// terminated. A hung or extremely slow scan, rather than a crash.
+    case timedOut
+
     /// A response line was received but wasn't valid JSON-RPC, or its
     /// "result" shape didn't match what this tool call expects.
     case invalidResponse(raw: String)
@@ -37,6 +41,8 @@ public enum RoamSwitchClientError: Error, LocalizedError, Sendable, Equatable {
             return "Failed to launch RoamSwitchMCPServer: \(underlying.localizedDescription)"
         case .noResponse:
             return "RoamSwitchMCPServer closed its output before responding."
+        case .timedOut:
+            return "RoamSwitchMCPServer did not respond in time and was terminated."
         case .invalidResponse(let raw):
             return "RoamSwitchMCPServer returned an unexpected response: \(raw)"
         case .toolError(let message):
@@ -52,6 +58,7 @@ public enum RoamSwitchClientError: Error, LocalizedError, Sendable, Equatable {
         case (.appNotInstalled, .appNotInstalled),
              (.serverBinaryNotFound, .serverBinaryNotFound),
              (.noResponse, .noResponse),
+             (.timedOut, .timedOut),
              (.processLaunchFailed, .processLaunchFailed):
             return true
         case let (.invalidResponse(a), .invalidResponse(b)):

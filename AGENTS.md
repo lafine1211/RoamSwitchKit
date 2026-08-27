@@ -30,7 +30,8 @@ dependencies: [
 import RoamSwitchKit
 
 public actor RoamSwitchClient {
-    public init(appBundleID: String = "com.tetsuharu.RoamSwitch") throws
+    public init(appBundleID: String = "com.tetsuharu.RoamSwitch", timeout: TimeInterval = 30) throws
+    public init(executableURL: URL, timeout: TimeInterval = 30) throws
 
     public func securityReport() async throws -> SecurityReport
     public func exposedPorts(includeLocalOnly: Bool = false) async throws -> ExposedPorts
@@ -38,6 +39,12 @@ public actor RoamSwitchClient {
     public func auditURLSafety(url: String) async throws -> LinkAuditReport
 }
 ```
+
+`timeout` is a per-call wall-clock ceiling (default 30s). If RoamSwitchMCPServer
+doesn't answer in time it is terminated and the call throws
+`RoamSwitchClientError.timedOut`. The blocking subprocess exchange runs off the
+Swift Concurrency cooperative pool, so a slow scan won't stall other `async`
+work in your app.
 
 This is the entire public API. There are no other types, methods, or properties to call. In particular:
 
@@ -143,6 +150,7 @@ public enum RoamSwitchClientError: Error, LocalizedError, Sendable, Equatable {
     case serverBinaryNotFound
     case processLaunchFailed(underlying: Error)
     case noResponse
+    case timedOut
     case invalidResponse(raw: String)
     case toolError(message: String)
 }

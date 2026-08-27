@@ -95,7 +95,8 @@ This is stateless by design: no persistent connection, no daemon, nothing left r
 
 ```swift
 public actor RoamSwitchClient {
-    public init(appBundleID: String = "com.tetsuharu.RoamSwitch") throws
+    public init(appBundleID: String = "com.tetsuharu.RoamSwitch", timeout: TimeInterval = 30) throws
+    public init(executableURL: URL, timeout: TimeInterval = 30) throws
 
     public func securityReport() async throws -> SecurityReport
     public func exposedPorts(includeLocalOnly: Bool = false) async throws -> ExposedPorts
@@ -104,8 +105,9 @@ public actor RoamSwitchClient {
 }
 ```
 
-- `init(appBundleID:)` — resolves and validates the RoamSwitch install. Override `appBundleID` only for testing against a differently-identified build.
-- `init(executableURL:)` — directly targets a specific `RoamSwitchMCPServer` binary (useful for debugging, testing, or non-standard install paths).
+- `init(appBundleID:timeout:)` — resolves and validates the RoamSwitch install. Override `appBundleID` only for testing against a differently-identified build.
+- `init(executableURL:timeout:)` — directly targets a specific `RoamSwitchMCPServer` binary (useful for debugging, testing, or non-standard install paths).
+- `timeout` — per-call wall-clock ceiling (default 30s). On expiry the subprocess is terminated and the call throws `.timedOut`. The blocking exchange runs off the Swift Concurrency cooperative pool, so it won't stall other `async` work.
 - `securityReport()` — runs RoamSwitch's full local Mac security audit.
 - `exposedPorts(includeLocalOnly:)` — lists listening TCP ports. Ports exposed beyond localhost are always fully audited; pass `includeLocalOnly: true` to also include localhost-only ports (returned without the slower per-port audit).
 - `guardStatus()` — current active security level, trusted-network status, and each optional guard's on/off state.
@@ -170,6 +172,7 @@ public actor RoamSwitchClient {
 | `.serverBinaryNotFound` | RoamSwitch is installed but predates 1.3.0 (no `RoamSwitchMCPServer` in the bundle) |
 | `.processLaunchFailed(underlying:)` | The subprocess itself failed to launch |
 | `.noResponse` | The subprocess's stdout closed before a response arrived |
+| `.timedOut` | The subprocess didn't respond within `timeout` and was terminated |
 | `.invalidResponse(raw:)` | A response was received but wasn't valid/expected JSON-RPC |
 | `.toolError(message:)` | The server returned a JSON-RPC error or a tool result with `isError: true` |
 
