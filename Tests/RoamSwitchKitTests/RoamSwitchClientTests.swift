@@ -64,7 +64,8 @@ final class RoamSwitchClientTests: XCTestCase {
         let report = try await client.securityReport()
         XCTAssertGreaterThanOrEqual(report.score, 0)
         XCTAssertGreaterThan(report.totalChecks, 0)
-        XCTAssertEqual(report.totalChecks, report.items.count)
+        XCTAssertEqual(report.totalChecks, report.items.filter { $0.isApplicable }.count)
+        XCTAssertLessThanOrEqual(report.totalChecks, report.items.count)
     }
 
     func testExposedPorts() async throws {

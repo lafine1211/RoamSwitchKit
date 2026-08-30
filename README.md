@@ -14,8 +14,8 @@ Concretely, RoamSwitch continuously computes:
 
 - **Network trust** — is the current Wi-Fi/gateway one you've marked trusted, and what security level (Open / Balanced / Lockdown) is currently active
 - **ARP spoofing** — gateway MAC fingerprint changes that indicate a man-in-the-middle attempt
-- **Exposed ports** — every TCP port listening beyond `localhost`, cross-referenced against a database of commonly-misconfigured services (Redis, MongoDB, Elasticsearch, Docker, Memcached, dev servers like `next dev`/Vite/`python -m http.server`) and probed for risky HTTP responses
-- **A 10-point local security posture score** — FileVault, SIP, Gatekeeper, auto-update, XProtect, firewall state, Wi-Fi encryption, ARP status, exposed ports, and guard configuration
+- **Exposed ports** — every TCP port listening beyond `localhost`, cross-referenced against a database of commonly-misconfigured services (Redis, MongoDB, Elasticsearch, Docker, Memcached, dev servers like `next dev`/Vite/`python -m http.server`, and local AI inference servers like Ollama:11434, LM Studio:1234, Gradio:7860, vLLM:8000) and probed for risky HTTP responses
+- **A 10-point local security posture score** — FileVault, SIP, Gatekeeper, auto-update, XProtect, firewall state, Wi-Fi encryption, ARP status, exposed ports, and guard configuration (including AI Pickle model download guard and confidential secret leak prevention)
 
 RoamSwitch already exposes this same data to AI assistants (Claude Desktop, Claude Code, and other [MCP](https://modelcontextprotocol.io)-compatible clients) via a bundled read-only MCP server — see [lafine.net/mcp-setup](https://lafine.net/mcp-setup.html). **RoamSwitchKit is the same interface, wrapped for Swift code instead of an AI client**: it lets your own macOS app or script ask "is this Mac's network safe right now?" and get back the exact data RoamSwitch itself computed, without reimplementing ARP inspection, port scanning, or Wi-Fi security checks yourself.
 
