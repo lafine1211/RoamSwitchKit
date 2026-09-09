@@ -89,6 +89,18 @@ public actor RoamSwitchClient {
         try await call("audit_url_safety", arguments: ["url": url], as: LinkAuditReport.self)
     }
 
+    /// Audits macOS Unified Log security events (sudo/SSH/Gatekeeper/XProtect)
+    /// over the given time window and returns the categorized findings plus
+    /// any log-pattern anomalies (a pattern never seen before on this Mac, or
+    /// one occurring far more often than usual this window). Every log
+    /// message is scanned for API keys/tokens/private-key headers and masked
+    /// before it ever leaves RoamSwitch.
+    ///
+    /// - Parameter hours: How far back to look, in hours. Defaults to 24.
+    public func auditSecurityLogs(hours: Int = 24) async throws -> SecurityLogAudit {
+        try await call("audit_security_logs", arguments: ["hours": hours], as: SecurityLogAudit.self)
+    }
+
     // MARK: - Private
 
     private func call<T: Decodable & Sendable>(

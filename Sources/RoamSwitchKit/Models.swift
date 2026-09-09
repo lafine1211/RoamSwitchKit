@@ -81,3 +81,33 @@ public struct LinkAuditReport: Codable, Equatable, Sendable {
     public let isHTTPS: Bool
     public let riskFactors: [LinkRiskFactor]
 }
+
+public struct SecurityLogEvent: Codable, Equatable, Sendable {
+    public let timestamp: String
+    public let process: String
+    public let category: String
+    public let severity: String
+    public let message: String
+}
+
+/// A log pattern flagged as anomalous — either never seen before on this
+/// Mac, or a statistical frequency outlier within the scanned time window.
+public struct TemplateAnomaly: Codable, Equatable, Sendable {
+    public let template: String
+    public let example: String
+    public let count: Int
+    public let zScore: Double
+    public let isNew: Bool
+}
+
+public struct SecurityLogAudit: Codable, Equatable, Sendable {
+    public let timeWindowHours: Int
+    public let totalEvents: Int
+    public let sudoFailures: Int
+    public let sshAttempts: Int
+    public let gatekeeperBlocks: Int
+    public let xprotectDetections: Int
+    public let isClean: Bool
+    public let events: [SecurityLogEvent]
+    public let templateAnomalies: [TemplateAnomaly]
+}

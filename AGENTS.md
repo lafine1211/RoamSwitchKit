@@ -37,6 +37,7 @@ public actor RoamSwitchClient {
     public func exposedPorts(includeLocalOnly: Bool = false) async throws -> ExposedPorts
     public func guardStatus() async throws -> GuardStatus
     public func auditURLSafety(url: String) async throws -> LinkAuditReport
+    public func auditSecurityLogs(hours: Int = 24) async throws -> SecurityLogAudit
 }
 ```
 
@@ -119,6 +120,7 @@ public struct GuardEntry: Codable, Equatable, Sendable {
     public let key: String
     public let enabledInSettings: Bool  // keys: portAnomalyGuard, arpSpoofAutoContainment, usbStorageGuard, bluetoothGuard, webMailDownloadGuard, dnsThreatGuard
 }
+```
 
 ### `LinkAuditReport`
 
@@ -140,6 +142,40 @@ public struct LinkRiskFactor: Codable, Equatable, Sendable {
     public let isSevere: Bool
 }
 ```
+
+### `SecurityLogAudit`
+
+```swift
+public struct SecurityLogAudit: Codable, Equatable, Sendable {
+    public let timeWindowHours: Int
+    public let totalEvents: Int
+    public let sudoFailures: Int
+    public let sshAttempts: Int
+    public let gatekeeperBlocks: Int
+    public let xprotectDetections: Int
+    public let isClean: Bool
+    public let events: [SecurityLogEvent]
+    public let templateAnomalies: [TemplateAnomaly]
+}
+
+public struct SecurityLogEvent: Codable, Equatable, Sendable {
+    public let timestamp: String   // ISO 8601
+    public let process: String
+    public let category: String    // "sudo" | "ssh" | "gatekeeper" | "xprotect" | "auth"
+    public let severity: String    // "info" | "warning" | "critical"
+    public let message: String     // already scanned and masked for API keys/tokens/private-key headers
+}
+
+// A log pattern never seen before on this Mac, or one occurring far more
+// often than usual within the requested time window (statistical outlier,
+// not a fixed threshold).
+public struct TemplateAnomaly: Codable, Equatable, Sendable {
+    public let template: String    // the message with variable parts (IPs, hex/hash tokens, numbers) masked to <IP>/<HEX>/<NUM>
+    public let example: String     // one real (masked) message that matched this template
+    public let count: Int          // occurrences within the requested window
+    public let zScore: Double      // 0 when isNew; >3.0 is what triggers a frequency-spike flag
+    public let isNew: Bool
+}
 ```
 
 ### `RoamSwitchClientError`

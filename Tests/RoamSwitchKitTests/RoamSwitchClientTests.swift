@@ -93,4 +93,18 @@ final class RoamSwitchClientTests: XCTestCase {
         XCTAssertEqual(report.riskLevel, "dangerous")
         XCTAssertFalse(report.riskFactors.isEmpty)
     }
+
+    func testAuditSecurityLogs() async throws {
+        let client = try makeClientOrSkip()
+        let audit = try await client.auditSecurityLogs(hours: 24)
+        XCTAssertEqual(audit.timeWindowHours, 24)
+        XCTAssertEqual(audit.totalEvents, audit.events.count)
+        // Every returned log message must already be scrubbed of API
+        // keys/tokens before it ever reaches this SDK — this is the whole
+        // point of exposing the tool at all.
+        for event in audit.events {
+            XCTAssertFalse(event.message.contains("sk-ant-"))
+            XCTAssertFalse(event.message.contains("sk-proj-"))
+        }
+    }
 }

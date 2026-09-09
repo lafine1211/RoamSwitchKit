@@ -72,6 +72,16 @@ print(status.activeSecurityLevelLabel, status.isCurrentNetworkTrusted)
 // phishing, Unicode homograph spoofing, and brand imitation (Zero Telemetry).
 let urlReport = try await client.auditURLSafety(url: "https://apple.com.login-verify.xyz")
 print(urlReport.score, urlReport.riskLevel) // e.g. 20, "dangerous"
+
+// macOS Unified Log security events (sudo/SSH/Gatekeeper/XProtect) over the
+// last N hours, plus any log-pattern anomalies (a pattern never seen before
+// on this Mac, or one occurring far more often than usual this window).
+// Every message is scanned for API keys/tokens/private-key headers and
+// masked before it ever leaves RoamSwitch.
+let logAudit = try await client.auditSecurityLogs(hours: 24)
+for anomaly in logAudit.templateAnomalies where anomaly.isNew {
+    print("New log pattern: \(anomaly.template)")
+}
 ```
 
 All calls are `async throws` and can fail with `RoamSwitchClientError` — most commonly `.appNotInstalled` if RoamSwitch isn't present. Handle that case gracefully (e.g. hide the feature, or point the user to lafine.net) rather than treating it as fatal.
@@ -102,6 +112,7 @@ public actor RoamSwitchClient {
     public func exposedPorts(includeLocalOnly: Bool = false) async throws -> ExposedPorts
     public func guardStatus() async throws -> GuardStatus
     public func auditURLSafety(url: String) async throws -> LinkAuditReport
+    public func auditSecurityLogs(hours: Int = 24) async throws -> SecurityLogAudit
 }
 ```
 
@@ -112,6 +123,7 @@ public actor RoamSwitchClient {
 - `exposedPorts(includeLocalOnly:)` — lists listening TCP ports. Ports exposed beyond localhost are always fully audited; pass `includeLocalOnly: true` to also include localhost-only ports (returned without the slower per-port audit).
 - `guardStatus()` — current active security level, trusted-network status, and each optional guard's on/off state.
 - `auditURLSafety(url:)` — analyzes an email link or web URL for phishing threats, Unicode homograph spoofing, brand subdomain deception, and high-risk TLDs (Zero Telemetry).
+- `auditSecurityLogs(hours:)` — audits macOS Unified Log security events (sudo/SSH/Gatekeeper/XProtect) over the given window and flags log-pattern anomalies (new patterns / frequency spikes). Every message is masked for API keys/tokens/private-key headers before it leaves RoamSwitch.
 
 ### `SecurityReport`
 
@@ -163,6 +175,24 @@ public actor RoamSwitchClient {
 | `riskFactors` | `[LinkRiskFactor]` | Specific findings — Unicode homograph spoofing, brand-name subdomain deception, high-risk TLDs, plaintext HTTP, etc. |
 
 `LinkRiskFactor`: `title`, `detail`, `isSevere: Bool`.
+
+### `SecurityLogAudit`
+
+| Field | Type | Description |
+|---|---|---|
+| `timeWindowHours` | `Int` | The requested window, echoed back |
+| `totalEvents` | `Int` | `events.count` |
+| `sudoFailures` | `Int` | Sudo authentication failures in the window |
+| `sshAttempts` | `Int` | SSH connection attempts in the window |
+| `gatekeeperBlocks` | `Int` | Gatekeeper blocks in the window |
+| `xprotectDetections` | `Int` | XProtect malware detections in the window |
+| `isClean` | `Bool` | No sudo failures, Gatekeeper blocks, or XProtect detections |
+| `events` | `[SecurityLogEvent]` | Individual matched log events, newest first |
+| `templateAnomalies` | `[TemplateAnomaly]` | Log patterns flagged as new or a frequency outlier — see below |
+
+`SecurityLogEvent`: `timestamp: String` (ISO 8601), `process`, `category: String` (`"sudo"` / `"ssh"` / `"gatekeeper"` / `"xprotect"` / `"auth"`), `severity: String` (`"info"` / `"warning"` / `"critical"`), `message` (already scanned and masked for API keys/tokens/private-key headers).
+
+`TemplateAnomaly`: a log pattern never seen before on this Mac, or one occurring far more often than usual within the requested window (a statistical outlier, not a fixed threshold) — `template` (the message with variable parts like IPs/hex/numbers masked to `<IP>`/`<HEX>`/`<NUM>`), `example` (one real, masked message matching this template), `count: Int`, `zScore: Double` (0 when `isNew`; >3.0 is what triggers a frequency-spike flag), `isNew: Bool`.
 
 ### `RoamSwitchClientError`
 
