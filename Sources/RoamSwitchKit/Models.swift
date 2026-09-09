@@ -158,3 +158,49 @@ public struct SecurityLogAudit: Codable, Equatable, Sendable {
     public let events: [SecurityLogEvent]
     public let templateAnomalies: [TemplateAnomaly]
 }
+
+public struct CanaryIncident: Codable, Equatable, Sendable {
+    public let timestamp: String
+    public let fileName: String
+    public let detectedAction: String
+    public let suspectedProcess: String?
+    public let affectedFilePaths: [String]
+}
+
+/// `recentIncidentsAvailable` is `true` whenever the Ransomware Canary Guard
+/// has ever run — incident history is persisted to disk by the main app, so
+/// a separate MCP server process (including this SDK's short-lived
+/// subprocess calls) can read it.
+public struct CanaryStatus: Codable, Equatable, Sendable {
+    public let isEnabled: Bool
+    public let monitoredFilesCount: Int
+    public let expectedFilesCount: Int
+    public let recentIncidentsAvailable: Bool
+    public let recentIncidents: [CanaryIncident]
+}
+
+public struct PortAnomalyIncident: Codable, Equatable, Sendable {
+    public let timestamp: String
+    public let port: Int
+    public let processName: String
+    public let pid: Int
+    public let executablePath: String?
+}
+
+public struct PortAnomalyIncidentsSummary: Codable, Equatable, Sendable {
+    public let isEnabled: Bool
+    public let baselineCaptured: Bool
+    public let autoIsolatedPorts: [Int]
+    public let incidents: [PortAnomalyIncident]
+}
+
+/// Mac equivalent of the Linux eBPF Runtime Guard's incident tool — fires
+/// when Apple's own XProtect malware engine convicts a file (this app has no
+/// EndpointSecurity entitlement for raw exec interception), then air-gaps
+/// the network. Scoped to a single latest incident, not a history array.
+public struct RuntimeThreatStatus: Codable, Equatable, Sendable {
+    public let isEnabled: Bool
+    public let isIsolated: Bool
+    public let lastContainmentDate: String?
+    public let lastIncident: SecurityLogEvent?
+}

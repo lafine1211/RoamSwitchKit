@@ -132,4 +132,29 @@ final class RoamSwitchClientTests: XCTestCase {
             XCTAssertTrue(result.findings.isEmpty)
         }
     }
+
+    func testCanaryStatus() async throws {
+        let client = try makeClientOrSkip()
+        let status = try await client.canaryStatus()
+        XCTAssertGreaterThanOrEqual(status.expectedFilesCount, status.monitoredFilesCount)
+        XCTAssertLessThanOrEqual(status.recentIncidents.count, 50)
+        XCTAssertEqual(status.recentIncidentsAvailable, !status.recentIncidents.isEmpty)
+    }
+
+    func testPortAnomalyIncidents() async throws {
+        let client = try makeClientOrSkip()
+        let result = try await client.portAnomalyIncidents()
+        XCTAssertLessThanOrEqual(result.incidents.count, 50)
+        XCTAssertGreaterThanOrEqual(result.autoIsolatedPorts.count, 0)
+    }
+
+    func testRuntimeThreatStatus() async throws {
+        let client = try makeClientOrSkip()
+        let status = try await client.runtimeThreatStatus()
+        // Isolation without a recorded trigger would be an inconsistent
+        // state — the manager always sets lastIncident before isIsolated.
+        if status.isIsolated {
+            XCTAssertNotNil(status.lastIncident)
+        }
+    }
 }

@@ -41,6 +41,9 @@ public actor RoamSwitchClient {
     public func activeVulnScan() async throws -> ActiveVulnScanResult
     public func packageCveScan() async throws -> PackageCveScanResult
     public func packageCveScanLanguages(watchedFolders: [String] = []) async throws -> PackageCveScanLanguagesResult
+    public func canaryStatus() async throws -> CanaryStatus
+    public func portAnomalyIncidents() async throws -> PortAnomalyIncidentsSummary
+    public func runtimeThreatStatus() async throws -> RuntimeThreatStatus
 }
 ```
 
@@ -115,13 +118,13 @@ public struct GuardStatus: Codable, Equatable, Sendable {
     public let activeSecurityLevel: String        // "open" | "balanced" | "lockdown"
     public let activeSecurityLevelLabel: String    // localized display name
     public let isCurrentNetworkTrusted: Bool
-    public let guards: [GuardEntry]                // keys: portAnomalyGuard, arpSpoofAutoContainment, usbStorageGuard, bluetoothGuard
+    public let guards: [GuardEntry]                // keys: portAnomalyGuard, arpSpoofAutoContainment, usbKeyboardGuard, usbStorageGuard, bluetoothGuard, webMailDownloadGuard, dnsThreatGuard, runtimeThreatContainment
     public let caveats: [String]
 }
 
 public struct GuardEntry: Codable, Equatable, Sendable {
     public let key: String
-    public let enabledInSettings: Bool  // keys: portAnomalyGuard, arpSpoofAutoContainment, usbStorageGuard, bluetoothGuard, webMailDownloadGuard, dnsThreatGuard
+    public let enabledInSettings: Bool
 }
 ```
 
@@ -228,6 +231,54 @@ public struct PackageCveLanguageFinding: Codable, Equatable, Sendable {
     public let cvssScore: Double
     public let fixedVersion: String
     public let summary: String
+}
+```
+
+### `CanaryStatus` / `PortAnomalyIncidentsSummary` / `RuntimeThreatStatus`
+
+All three read only local UserDefaults/disk state on the Mac — no network requests — so they also work during a network Air-Gap, including when queried by a local LLM while cloud AI clients are cut off.
+
+```swift
+public struct CanaryStatus: Codable, Equatable, Sendable {
+    public let isEnabled: Bool
+    public let monitoredFilesCount: Int
+    public let expectedFilesCount: Int
+    public let recentIncidentsAvailable: Bool   // true once the guard has ever run
+    public let recentIncidents: [CanaryIncident]  // up to 50, newest first
+}
+
+public struct CanaryIncident: Codable, Equatable, Sendable {
+    public let timestamp: String           // ISO 8601
+    public let fileName: String
+    public let detectedAction: String      // e.g. deletion, rename, tampering
+    public let suspectedProcess: String?
+    public let affectedFilePaths: [String] // best-effort; real user files possibly also touched
+}
+
+public struct PortAnomalyIncidentsSummary: Codable, Equatable, Sendable {
+    public let isEnabled: Bool
+    public let baselineCaptured: Bool
+    public let autoIsolatedPorts: [Int]
+    public let incidents: [PortAnomalyIncident]  // up to 50, newest first
+}
+
+public struct PortAnomalyIncident: Codable, Equatable, Sendable {
+    public let timestamp: String   // ISO 8601
+    public let port: Int
+    public let processName: String
+    public let pid: Int
+    public let executablePath: String?
+}
+
+// Mac equivalent of the Linux client's eBPF Runtime Guard — fires when
+// Apple's own XProtect malware engine convicts a file (no EndpointSecurity
+// entitlement for raw exec interception), then air-gaps the network. Scoped
+// to a single latest incident, not a history array.
+public struct RuntimeThreatStatus: Codable, Equatable, Sendable {
+    public let isEnabled: Bool
+    public let isIsolated: Bool
+    public let lastContainmentDate: String?    // ISO 8601
+    public let lastIncident: SecurityLogEvent?
 }
 ```
 

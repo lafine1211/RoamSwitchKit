@@ -127,6 +127,37 @@ public actor RoamSwitchClient {
         try await call("run_package_cve_scan_languages", arguments: ["watchedFolders": watchedFolders], as: PackageCveScanLanguagesResult.self)
     }
 
+    /// Reports whether the Ransomware Canary Guard (Pro) is enabled, how
+    /// many of its decoy bait files currently exist on disk, and up to the
+    /// 50 most recent detected incidents. Sends no network requests — reads
+    /// only local state, so this also works during a network Air-Gap.
+    public func canaryStatus() async throws -> CanaryStatus {
+        try await call("get_canary_status", arguments: [:], as: CanaryStatus.self)
+    }
+
+    /// Reports whether the Port Anomaly Guard (Pro) is enabled, whether it
+    /// has captured its baseline yet, which ports are currently
+    /// auto-isolated, and up to the 50 most recent detected incidents —
+    /// previously-unseen executables that suddenly started listening on an
+    /// externally-exposed port and were auto-blocked. Sends no network
+    /// requests — reads only local state, so this also works during a
+    /// network Air-Gap.
+    public func portAnomalyIncidents() async throws -> PortAnomalyIncidentsSummary {
+        try await call("get_port_anomaly_incidents", arguments: [:], as: PortAnomalyIncidentsSummary.self)
+    }
+
+    /// Reports whether the Runtime Threat Containment guard (Pro) is
+    /// enabled, whether this Mac is currently network-isolated (Air-Gapped)
+    /// because of it, and the single most recent malware incident that
+    /// triggered containment — this guard fires when Apple's own XProtect
+    /// malware engine actually convicts a file. Sends no network requests —
+    /// reads only local state, so this also works during a network Air-Gap
+    /// (indeed, it's one of the first things to check to understand why one
+    /// is active).
+    public func runtimeThreatStatus() async throws -> RuntimeThreatStatus {
+        try await call("get_runtime_threat_status", arguments: [:], as: RuntimeThreatStatus.self)
+    }
+
     // MARK: - Private
 
     private func call<T: Decodable & Sendable>(

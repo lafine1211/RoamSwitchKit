@@ -99,6 +99,28 @@ let activeScan = try await client.activeVulnScan()
 if activeScan.enabled {
     print(activeScan.findings.count, "confirmed finding(s)")
 }
+
+// Ransomware Canary Guard: decoy bait files + up to 50 most recent
+// detected incidents. Reads only local state, so this also works during
+// a network Air-Gap.
+let canary = try await client.canaryStatus()
+for incident in canary.recentIncidents {
+    print(incident.timestamp, incident.fileName, incident.detectedAction)
+}
+
+// Port Anomaly Guard: previously-unseen executables that suddenly started
+// listening on an externally-exposed port and were auto-blocked.
+let portIncidents = try await client.portAnomalyIncidents()
+print(portIncidents.autoIsolatedPorts)
+
+// Runtime Threat Containment (Mac equivalent of Linux's eBPF Runtime
+// Guard): fires when Apple's own XProtect malware engine convicts a file,
+// then air-gaps the network. Query this first to understand an active
+// Air-Gap's trigger, including from a local LLM during the cutoff itself.
+let runtimeThreat = try await client.runtimeThreatStatus()
+if runtimeThreat.isIsolated {
+    print("Air-Gapped due to:", runtimeThreat.lastIncident?.message ?? "unknown")
+}
 ```
 
 All calls are `async throws` and can fail with `RoamSwitchClientError` — most commonly `.appNotInstalled` if RoamSwitch isn't present. Handle that case gracefully (e.g. hide the feature, or point the user to lafine.net) rather than treating it as fatal.
@@ -133,6 +155,9 @@ public actor RoamSwitchClient {
     public func activeVulnScan() async throws -> ActiveVulnScanResult
     public func packageCveScan() async throws -> PackageCveScanResult
     public func packageCveScanLanguages(watchedFolders: [String] = []) async throws -> PackageCveScanLanguagesResult
+    public func canaryStatus() async throws -> CanaryStatus
+    public func portAnomalyIncidents() async throws -> PortAnomalyIncidentsSummary
+    public func runtimeThreatStatus() async throws -> RuntimeThreatStatus
 }
 ```
 
@@ -147,6 +172,9 @@ public actor RoamSwitchClient {
 - `activeVulnScan()` — runs real, non-destructive network probes against this Mac's own listening ports (127.0.0.1 only) to confirm whether a commonly-exposed service actually responds unauthenticated. Off by default (opt-in in RoamSwitch's Settings); returns `enabled: false` and no findings until enabled.
 - `packageCveScan()` — audits installed Homebrew formulae against RoamSwitch's local, network-free CVE map (real NVD data for a hand-curated allowlist).
 - `packageCveScanLanguages(watchedFolders:)` — audits language-ecosystem lockfiles (npm/PyPI/crates.io/etc.) under the given folders against the same local CVE map.
+- `canaryStatus()` — Ransomware Canary Guard (Pro): decoy bait file counts plus up to the 50 most recent detected incidents. Reads only local state (works during a network Air-Gap).
+- `portAnomalyIncidents()` — Port Anomaly Guard (Pro): baseline/auto-isolated-port state plus up to the 50 most recent incidents (previously-unseen executables that started listening on an externally-exposed port). Reads only local state (works during a network Air-Gap).
+- `runtimeThreatStatus()` — Runtime Threat Containment (Pro): whether this Mac is currently Air-Gapped due to an Apple XProtect malware conviction, and the single most recent triggering incident. Reads only local state (works during a network Air-Gap) — check this first to understand an active Air-Gap's cause.
 
 ### `SecurityReport`
 
@@ -179,7 +207,7 @@ public actor RoamSwitchClient {
 | `activeSecurityLevel` | `String` | Raw level identifier (`"open"` / `"balanced"` / `"lockdown"`) |
 | `activeSecurityLevelLabel` | `String` | Localized display name |
 | `isCurrentNetworkTrusted` | `Bool` | Whether the current gateway matches a saved trusted network |
-| `guards` | `[GuardEntry]` | One entry per optional guard: `portAnomalyGuard`, `arpSpoofAutoContainment`, `usbStorageGuard`, `bluetoothGuard`, `webMailDownloadGuard`, `dnsThreatGuard` |
+| `guards` | `[GuardEntry]` | One entry per optional guard: `portAnomalyGuard`, `arpSpoofAutoContainment`, `usbKeyboardGuard`, `usbStorageGuard`, `bluetoothGuard`, `webMailDownloadGuard`, `dnsThreatGuard`, `runtimeThreatContainment` |
 | `caveats` | `[String]` | Notes — in particular, that `enabledInSettings` reflects the Settings toggle only; actual guard behavior also depends on RoamSwitch Pro license state, which this tool (running as a separate process) can't verify |
 
 `GuardEntry`: `key: String`, `enabledInSettings: Bool`.
@@ -246,6 +274,40 @@ public actor RoamSwitchClient {
 | `findings` | `[PackageCveLanguageFinding]` | One entry per lockfile dependency matching a known CVE |
 
 `PackageCveLanguageFinding`: `ecosystem` (e.g. `"npm"`, `"PyPI"`, `"crates.io"`), `cveId`, `package`, `installedVersion`, `cvssScore: Double`, `fixedVersion`, `summary`.
+
+### `CanaryStatus`
+
+| Field | Type | Description |
+|---|---|---|
+| `isEnabled` | `Bool` | Whether the Ransomware Canary Guard is on in Settings |
+| `monitoredFilesCount` | `Int` | How many of the expected decoy bait files currently exist on disk |
+| `expectedFilesCount` | `Int` | The full expected bait file set size |
+| `recentIncidentsAvailable` | `Bool` | `true` once the guard has ever run — incident history is persisted to disk by the main app, so this separate process can read it |
+| `recentIncidents` | `[CanaryIncident]` | Up to the 50 most recent detected incidents, newest first |
+
+`CanaryIncident`: `timestamp: String` (ISO 8601), `fileName`, `detectedAction` (e.g. deletion, rename, tampering), `suspectedProcess: String?`, `affectedFilePaths: [String]` (best-effort list of real user files that may also have been touched).
+
+### `PortAnomalyIncidentsSummary`
+
+| Field | Type | Description |
+|---|---|---|
+| `isEnabled` | `Bool` | Whether the Port Anomaly Guard is on in Settings |
+| `baselineCaptured` | `Bool` | Whether the guard has finished capturing its baseline of known listening executables |
+| `autoIsolatedPorts` | `[Int]` | Ports currently auto-isolated from the LAN by this guard |
+| `incidents` | `[PortAnomalyIncident]` | Up to the 50 most recent detected incidents, newest first |
+
+`PortAnomalyIncident`: `timestamp: String` (ISO 8601), `port: Int`, `processName`, `pid: Int`, `executablePath: String?`.
+
+### `RuntimeThreatStatus`
+
+Mac equivalent of the Linux client's eBPF Runtime Guard — fires when Apple's own XProtect malware engine convicts a file (this app has no EndpointSecurity entitlement for raw exec interception), then air-gaps the network. Scoped to a single latest incident, not a history array.
+
+| Field | Type | Description |
+|---|---|---|
+| `isEnabled` | `Bool` | Whether Runtime Threat Containment is on in Settings |
+| `isIsolated` | `Bool` | Whether this Mac is currently network-isolated (Air-Gapped) because of it |
+| `lastContainmentDate` | `String?` | ISO 8601 timestamp of the most recent containment |
+| `lastIncident` | `SecurityLogEvent?` | The triggering XProtect detection |
 
 ### `RoamSwitchClientError`
 
