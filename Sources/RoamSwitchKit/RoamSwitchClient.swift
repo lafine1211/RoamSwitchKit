@@ -101,6 +101,32 @@ public actor RoamSwitchClient {
         try await call("audit_security_logs", arguments: ["hours": hours], as: SecurityLogAudit.self)
     }
 
+    /// Runs real, non-destructive network probes against this Mac's own
+    /// listening ports (127.0.0.1 only) to verify whether a commonly-exposed
+    /// service (Redis, MongoDB, Elasticsearch, etc.) actually responds
+    /// unauthenticated, rather than only inferring risk from the port number.
+    /// Off by default — returns `enabled: false` and no findings unless the
+    /// user has opted in to this feature in RoamSwitch's Settings.
+    public func activeVulnScan() async throws -> ActiveVulnScanResult {
+        try await call("run_active_vuln_scan", arguments: [:], as: ActiveVulnScanResult.self)
+    }
+
+    /// Audits installed Homebrew formulae against RoamSwitch's local,
+    /// network-free CVE map (real NVD CVE data for a hand-curated
+    /// formula→CPE allowlist — never fabricated). Sends no network requests.
+    public func packageCveScan() async throws -> PackageCveScanResult {
+        try await call("run_package_cve_scan", arguments: [:], as: PackageCveScanResult.self)
+    }
+
+    /// Audits language-ecosystem lockfiles (npm/PyPI/crates.io/etc.) under
+    /// the given folders against RoamSwitch's local CVE map. Sends no
+    /// network requests.
+    ///
+    /// - Parameter watchedFolders: Absolute paths to scan for lockfiles.
+    public func packageCveScanLanguages(watchedFolders: [String] = []) async throws -> PackageCveScanLanguagesResult {
+        try await call("run_package_cve_scan_languages", arguments: ["watchedFolders": watchedFolders], as: PackageCveScanLanguagesResult.self)
+    }
+
     // MARK: - Private
 
     private func call<T: Decodable & Sendable>(

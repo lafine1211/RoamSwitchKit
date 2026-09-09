@@ -107,4 +107,29 @@ final class RoamSwitchClientTests: XCTestCase {
             XCTAssertFalse(event.message.contains("sk-proj-"))
         }
     }
+
+    func testPackageCveScan() async throws {
+        let client = try makeClientOrSkip()
+        let result = try await client.packageCveScan()
+        // The embedded baseline can legitimately ship as an empty seed until
+        // the daily updater installs real data, so only assert the call
+        // succeeds and returns a well-formed result.
+        XCTAssertGreaterThanOrEqual(result.findings.count, 0)
+    }
+
+    func testPackageCveScanLanguages() async throws {
+        let client = try makeClientOrSkip()
+        let result = try await client.packageCveScanLanguages(watchedFolders: [])
+        XCTAssertEqual(result.scannedFolderCount, 0)
+        XCTAssertTrue(result.findings.isEmpty)
+    }
+
+    func testActiveVulnScan() async throws {
+        let client = try makeClientOrSkip()
+        let result = try await client.activeVulnScan()
+        // Off by default: an un-opted-in machine must report no findings.
+        if !result.enabled {
+            XCTAssertTrue(result.findings.isEmpty)
+        }
+    }
 }

@@ -38,6 +38,9 @@ public actor RoamSwitchClient {
     public func guardStatus() async throws -> GuardStatus
     public func auditURLSafety(url: String) async throws -> LinkAuditReport
     public func auditSecurityLogs(hours: Int = 24) async throws -> SecurityLogAudit
+    public func activeVulnScan() async throws -> ActiveVulnScanResult
+    public func packageCveScan() async throws -> PackageCveScanResult
+    public func packageCveScanLanguages(watchedFolders: [String] = []) async throws -> PackageCveScanLanguagesResult
 }
 ```
 
@@ -175,6 +178,56 @@ public struct TemplateAnomaly: Codable, Equatable, Sendable {
     public let count: Int          // occurrences within the requested window
     public let zScore: Double      // 0 when isNew; >3.0 is what triggers a frequency-spike flag
     public let isNew: Bool
+}
+```
+
+### `ActiveVulnScanResult` / `PackageCveScanResult` / `PackageCveScanLanguagesResult`
+
+```swift
+public struct ActiveVulnScanResult: Codable, Equatable, Sendable {
+    public let enabled: Bool               // false unless the user opted in in Settings — findings is empty either way then
+    public let scannedTargetCount: Int
+    public let findings: [ActiveVulnScanFinding]
+    public let message: String
+}
+
+public struct ActiveVulnScanFinding: Codable, Equatable, Sendable {
+    public let port: Int
+    public let processName: String
+    public let title: String
+    public let description: String
+    public let recommendation: String
+}
+
+public struct PackageCveScanResult: Codable, Equatable, Sendable {
+    public let mapInstalled: Bool          // false = no local CVE data yet, distinct from "ran, found nothing"
+    public let mapVersion: String
+    public let findings: [PackageCveFinding]
+}
+
+public struct PackageCveFinding: Codable, Equatable, Sendable {
+    public let cveId: String
+    public let package: String
+    public let installedVersion: String
+    public let cvssScore: Double
+    public let fixedVersion: String
+    public let summary: String
+    public let confidence: String          // "confirmed" | "gray" (unverified exact-keyword match — possible false positive)
+}
+
+public struct PackageCveScanLanguagesResult: Codable, Equatable, Sendable {
+    public let scannedFolderCount: Int
+    public let findings: [PackageCveLanguageFinding]
+}
+
+public struct PackageCveLanguageFinding: Codable, Equatable, Sendable {
+    public let ecosystem: String           // "npm" | "PyPI" | "crates.io" | ...
+    public let cveId: String
+    public let package: String
+    public let installedVersion: String
+    public let cvssScore: Double
+    public let fixedVersion: String
+    public let summary: String
 }
 ```
 

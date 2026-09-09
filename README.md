@@ -82,6 +82,23 @@ let logAudit = try await client.auditSecurityLogs(hours: 24)
 for anomaly in logAudit.templateAnomalies where anomaly.isNew {
     print("New log pattern: \(anomaly.template)")
 }
+
+// Installed Homebrew formulae checked against a local, network-free CVE map.
+let pkgCve = try await client.packageCveScan()
+for finding in pkgCve.findings {
+    print("\(finding.package) \(finding.installedVersion): \(finding.cveId) (CVSS \(finding.cvssScore))")
+}
+
+// Same idea for language-ecosystem lockfiles (npm/PyPI/crates.io/etc.).
+let langCve = try await client.packageCveScanLanguages(watchedFolders: ["/Users/me/code/my-app"])
+print(langCve.scannedFolderCount, langCve.findings.count)
+
+// Real (opt-in) network probes confirming whether an exposed service
+// actually responds unauthenticated, not just port-number inference.
+let activeScan = try await client.activeVulnScan()
+if activeScan.enabled {
+    print(activeScan.findings.count, "confirmed finding(s)")
+}
 ```
 
 All calls are `async throws` and can fail with `RoamSwitchClientError` — most commonly `.appNotInstalled` if RoamSwitch isn't present. Handle that case gracefully (e.g. hide the feature, or point the user to lafine.net) rather than treating it as fatal.
@@ -113,6 +130,9 @@ public actor RoamSwitchClient {
     public func guardStatus() async throws -> GuardStatus
     public func auditURLSafety(url: String) async throws -> LinkAuditReport
     public func auditSecurityLogs(hours: Int = 24) async throws -> SecurityLogAudit
+    public func activeVulnScan() async throws -> ActiveVulnScanResult
+    public func packageCveScan() async throws -> PackageCveScanResult
+    public func packageCveScanLanguages(watchedFolders: [String] = []) async throws -> PackageCveScanLanguagesResult
 }
 ```
 
@@ -124,6 +144,9 @@ public actor RoamSwitchClient {
 - `guardStatus()` — current active security level, trusted-network status, and each optional guard's on/off state.
 - `auditURLSafety(url:)` — analyzes an email link or web URL for phishing threats, Unicode homograph spoofing, brand subdomain deception, and high-risk TLDs (Zero Telemetry).
 - `auditSecurityLogs(hours:)` — audits macOS Unified Log security events (sudo/SSH/Gatekeeper/XProtect) over the given window and flags log-pattern anomalies (new patterns / frequency spikes). Every message is masked for API keys/tokens/private-key headers before it leaves RoamSwitch.
+- `activeVulnScan()` — runs real, non-destructive network probes against this Mac's own listening ports (127.0.0.1 only) to confirm whether a commonly-exposed service actually responds unauthenticated. Off by default (opt-in in RoamSwitch's Settings); returns `enabled: false` and no findings until enabled.
+- `packageCveScan()` — audits installed Homebrew formulae against RoamSwitch's local, network-free CVE map (real NVD data for a hand-curated allowlist).
+- `packageCveScanLanguages(watchedFolders:)` — audits language-ecosystem lockfiles (npm/PyPI/crates.io/etc.) under the given folders against the same local CVE map.
 
 ### `SecurityReport`
 
@@ -193,6 +216,36 @@ public actor RoamSwitchClient {
 `SecurityLogEvent`: `timestamp: String` (ISO 8601), `process`, `category: String` (`"sudo"` / `"ssh"` / `"gatekeeper"` / `"xprotect"` / `"auth"`), `severity: String` (`"info"` / `"warning"` / `"critical"`), `message` (already scanned and masked for API keys/tokens/private-key headers).
 
 `TemplateAnomaly`: a log pattern never seen before on this Mac, or one occurring far more often than usual within the requested window (a statistical outlier, not a fixed threshold) — `template` (the message with variable parts like IPs/hex/numbers masked to `<IP>`/`<HEX>`/`<NUM>`), `example` (one real, masked message matching this template), `count: Int`, `zScore: Double` (0 when `isNew`; >3.0 is what triggers a frequency-spike flag), `isNew: Bool`.
+
+### `ActiveVulnScanResult`
+
+| Field | Type | Description |
+|---|---|---|
+| `enabled` | `Bool` | Whether the user has opted in to this feature in Settings |
+| `scannedTargetCount` | `Int` | Number of listening ports probed |
+| `findings` | `[ActiveVulnScanFinding]` | Confirmed, non-destructive findings — empty when `enabled` is `false` |
+| `message` | `String` | Human-readable summary |
+
+`ActiveVulnScanFinding`: `port: Int`, `processName`, `title`, `description`, `recommendation`.
+
+### `PackageCveScanResult`
+
+| Field | Type | Description |
+|---|---|---|
+| `mapInstalled` | `Bool` | Whether a real (non-empty) local CVE map is installed — `false` means "no data yet", not "nothing found" |
+| `mapVersion` | `String` | Version identifier of the installed CVE map |
+| `findings` | `[PackageCveFinding]` | One entry per installed package matching a known CVE |
+
+`PackageCveFinding`: `cveId`, `package`, `installedVersion`, `cvssScore: Double`, `fixedVersion`, `summary`, `confidence: String` (`"confirmed"` = hand-verified formula→CPE mapping, `"gray"` = exact-keyword match never hand-verified — treat as a possible false positive).
+
+### `PackageCveScanLanguagesResult`
+
+| Field | Type | Description |
+|---|---|---|
+| `scannedFolderCount` | `Int` | Number of folders passed in `watchedFolders` |
+| `findings` | `[PackageCveLanguageFinding]` | One entry per lockfile dependency matching a known CVE |
+
+`PackageCveLanguageFinding`: `ecosystem` (e.g. `"npm"`, `"PyPI"`, `"crates.io"`), `cveId`, `package`, `installedVersion`, `cvssScore: Double`, `fixedVersion`, `summary`.
 
 ### `RoamSwitchClientError`
 

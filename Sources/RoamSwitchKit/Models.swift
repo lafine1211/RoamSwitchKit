@@ -25,6 +25,7 @@ public struct SecurityReport: Codable, Equatable, Sendable {
     public let passedChecks: Int
     public let items: [SecurityAuditItem]
     public let caveats: [String]
+    public let timestamp: String
 }
 
 public struct PortFinding: Codable, Equatable, Sendable {
@@ -98,6 +99,52 @@ public struct TemplateAnomaly: Codable, Equatable, Sendable {
     public let count: Int
     public let zScore: Double
     public let isNew: Bool
+}
+
+public struct ActiveVulnScanFinding: Codable, Equatable, Sendable {
+    public let port: Int
+    public let processName: String
+    public let title: String
+    public let description: String
+    public let recommendation: String
+}
+
+public struct ActiveVulnScanResult: Codable, Equatable, Sendable {
+    public let enabled: Bool
+    public let scannedTargetCount: Int
+    public let findings: [ActiveVulnScanFinding]
+    public let message: String
+}
+
+public struct PackageCveFinding: Codable, Equatable, Sendable {
+    public let cveId: String
+    public let package: String
+    public let installedVersion: String
+    public let cvssScore: Double
+    public let fixedVersion: String
+    public let summary: String
+    public let confidence: String
+}
+
+public struct PackageCveScanResult: Codable, Equatable, Sendable {
+    public let mapInstalled: Bool
+    public let mapVersion: String
+    public let findings: [PackageCveFinding]
+}
+
+public struct PackageCveLanguageFinding: Codable, Equatable, Sendable {
+    public let ecosystem: String
+    public let cveId: String
+    public let package: String
+    public let installedVersion: String
+    public let cvssScore: Double
+    public let fixedVersion: String
+    public let summary: String
+}
+
+public struct PackageCveScanLanguagesResult: Codable, Equatable, Sendable {
+    public let scannedFolderCount: Int
+    public let findings: [PackageCveLanguageFinding]
 }
 
 public struct SecurityLogAudit: Codable, Equatable, Sendable {
