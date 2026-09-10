@@ -158,6 +158,13 @@ public actor RoamSwitchClient {
         try await call("get_runtime_threat_status", arguments: [:], as: RuntimeThreatStatus.self)
     }
 
+    /// Returns the notifications RoamSwitch has sent over the past 7 days,
+    /// most recent first. Sends no network requests — reads only local
+    /// state, so this also works during a network Air-Gap.
+    public func notificationHistory() async throws -> [NotificationHistoryEntry] {
+        try await call("get_notification_history", arguments: [:], as: NotificationHistoryWrapper.self).notifications
+    }
+
     // MARK: - Private
 
     private func call<T: Decodable & Sendable>(

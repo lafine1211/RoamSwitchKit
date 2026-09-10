@@ -157,4 +157,13 @@ final class RoamSwitchClientTests: XCTestCase {
             XCTAssertNotNil(status.lastIncident)
         }
     }
+
+    func testNotificationHistory() async throws {
+        let client = try makeClientOrSkip()
+        let entries = try await client.notificationHistory()
+        // Most-recent-first: each timestamp should sort >= the one after it.
+        for i in entries.indices.dropFirst() {
+            XCTAssertGreaterThanOrEqual(entries[i - 1].timestamp, entries[i].timestamp)
+        }
+    }
 }

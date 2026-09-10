@@ -204,3 +204,19 @@ public struct RuntimeThreatStatus: Codable, Equatable, Sendable {
     public let lastContainmentDate: String?
     public let lastIncident: SecurityLogEvent?
 }
+
+/// One notification RoamSwitch has sent (log-audit anomaly, ClickFix
+/// detection, and the like) — entries older than 7 days are pruned before
+/// this SDK ever sees them. Mirrors the Linux edition's
+/// `roamswitchkit::NotificationHistoryEntry`.
+public struct NotificationHistoryEntry: Codable, Equatable, Sendable {
+    /// ISO 8601, so entries sort lexicographically in the same order as
+    /// chronologically.
+    public let timestamp: String
+    public let title: String
+    public let body: String
+}
+
+struct NotificationHistoryWrapper: Codable, Sendable {
+    let notifications: [NotificationHistoryEntry]
+}

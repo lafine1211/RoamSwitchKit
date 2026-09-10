@@ -121,6 +121,15 @@ let runtimeThreat = try await client.runtimeThreatStatus()
 if runtimeThreat.isIsolated {
     print("Air-Gapped due to:", runtimeThreat.lastIncident?.message ?? "unknown")
 }
+
+// Notification history: every notification RoamSwitch has sent over the
+// past 7 days (log-audit anomalies, ClickFix detections, etc), most
+// recent first. Reads only local state, so this also works during a
+// network Air-Gap.
+let notifications = try await client.notificationHistory()
+for entry in notifications {
+    print(entry.timestamp, entry.title)
+}
 ```
 
 All calls are `async throws` and can fail with `RoamSwitchClientError` — most commonly `.appNotInstalled` if RoamSwitch isn't present. Handle that case gracefully (e.g. hide the feature, or point the user to lafine.net) rather than treating it as fatal.
@@ -158,6 +167,7 @@ public actor RoamSwitchClient {
     public func canaryStatus() async throws -> CanaryStatus
     public func portAnomalyIncidents() async throws -> PortAnomalyIncidentsSummary
     public func runtimeThreatStatus() async throws -> RuntimeThreatStatus
+    public func notificationHistory() async throws -> [NotificationHistoryEntry]
 }
 ```
 
@@ -175,6 +185,7 @@ public actor RoamSwitchClient {
 - `canaryStatus()` — Ransomware Canary Guard (Pro): decoy bait file counts plus up to the 50 most recent detected incidents. Reads only local state (works during a network Air-Gap).
 - `portAnomalyIncidents()` — Port Anomaly Guard (Pro): baseline/auto-isolated-port state plus up to the 50 most recent incidents (previously-unseen executables that started listening on an externally-exposed port). Reads only local state (works during a network Air-Gap).
 - `runtimeThreatStatus()` — Runtime Threat Containment (Pro): whether this Mac is currently Air-Gapped due to an Apple XProtect malware conviction, and the single most recent triggering incident. Reads only local state (works during a network Air-Gap) — check this first to understand an active Air-Gap's cause.
+- `notificationHistory()` — every notification RoamSwitch has sent over the past 7 days (log-audit anomalies, ClickFix detections, and the like), most recent first. Reads only local state (works during a network Air-Gap).
 
 ### `SecurityReport`
 
@@ -308,6 +319,14 @@ Mac equivalent of the Linux client's eBPF Runtime Guard — fires when Apple's o
 | `isIsolated` | `Bool` | Whether this Mac is currently network-isolated (Air-Gapped) because of it |
 | `lastContainmentDate` | `String?` | ISO 8601 timestamp of the most recent containment |
 | `lastIncident` | `SecurityLogEvent?` | The triggering XProtect detection |
+
+### `NotificationHistoryEntry`
+
+| Field | Type | Description |
+|---|---|---|
+| `timestamp` | `String` | ISO 8601 — entries sort lexicographically in the same order as chronologically |
+| `title` | `String` | The notification's title |
+| `body` | `String` | The notification's body text |
 
 ### `RoamSwitchClientError`
 
