@@ -44,6 +44,7 @@ public actor RoamSwitchClient {
     public func canaryStatus() async throws -> CanaryStatus
     public func portAnomalyIncidents() async throws -> PortAnomalyIncidentsSummary
     public func runtimeThreatStatus() async throws -> RuntimeThreatStatus
+    public func notificationHistory() async throws -> [NotificationHistoryEntry]
 }
 ```
 
@@ -234,9 +235,9 @@ public struct PackageCveLanguageFinding: Codable, Equatable, Sendable {
 }
 ```
 
-### `CanaryStatus` / `PortAnomalyIncidentsSummary` / `RuntimeThreatStatus`
+### `CanaryStatus` / `PortAnomalyIncidentsSummary` / `RuntimeThreatStatus` / `NotificationHistoryEntry`
 
-All three read only local UserDefaults/disk state on the Mac — no network requests — so they also work during a network Air-Gap, including when queried by a local LLM while cloud AI clients are cut off.
+All four read only local UserDefaults/disk state on the Mac — no network requests — so they also work during a network Air-Gap, including when queried by a local LLM while cloud AI clients are cut off.
 
 ```swift
 public struct CanaryStatus: Codable, Equatable, Sendable {
@@ -279,6 +280,14 @@ public struct RuntimeThreatStatus: Codable, Equatable, Sendable {
     public let isIsolated: Bool
     public let lastContainmentDate: String?    // ISO 8601
     public let lastIncident: SecurityLogEvent?
+}
+
+// Every notification RoamSwitch has sent over the past 7 days (log-audit
+// anomalies, ClickFix detections, and the like), most recent first.
+public struct NotificationHistoryEntry: Codable, Equatable, Sendable {
+    public let timestamp: String   // ISO 8601
+    public let title: String
+    public let body: String
 }
 ```
 
