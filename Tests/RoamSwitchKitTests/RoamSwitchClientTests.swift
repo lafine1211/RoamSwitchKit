@@ -166,4 +166,145 @@ final class RoamSwitchClientTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(entries[i - 1].timestamp, entries[i].timestamp)
         }
     }
+
+    func testAuditSecretsText() async throws {
+        let client = try makeClientOrSkip()
+        // A syntactically valid but fake GitHub token: must be detected and
+        // must come back masked, never verbatim.
+        let fake = "ghp_" + String(String(repeating: "aB3dE5fG7h", count: 4).prefix(36))
+        let result = try await client.auditSecrets(text: "token = \(fake)")
+        for finding in result.findings {
+            XCTAssertFalse(finding.masked.contains(fake))
+        }
+    }
+
+    func testAuditSecretsMissingPathThrowsToolError() async throws {
+        let client = try makeClientOrSkip()
+        do {
+            _ = try await client.auditSecrets(path: "/definitely/not/a/real/path-\(UUID().uuidString)")
+            XCTFail("expected a tool error")
+        } catch let error as RoamSwitchClientError {
+            guard case .toolError = error else { return XCTFail("expected .toolError, got \(error)") }
+        }
+    }
+
+    func testQuarantineStatus() async throws {
+        let client = try makeClientOrSkip()
+        let status = try await client.quarantineStatus()
+        XCTAssertFalse(status.quarantineDirectory.isEmpty)
+    }
+
+    func testAppHelp() async throws {
+        let client = try makeClientOrSkip()
+        let result = try await client.appHelp(query: "ARP", topic: .feature)
+        XCTAssertEqual(result.totalResults, result.items.count)
+        for item in result.items {
+            XCTAssertEqual(item.topic, AppHelpTopic.feature.rawValue)
+        }
+    }
+
+    func testDocResources() async throws {
+        let client = try makeClientOrSkip()
+        let resources = try await client.docResources()
+        XCTAssertFalse(resources.isEmpty)
+        let first = try XCTUnwrap(resources.first)
+        let content = try await client.readDocResource(uri: first.uri)
+        XCTAssertEqual(content.uri, first.uri)
+        XCTAssertFalse(content.text.isEmpty)
+    }
+
+    /// Needs RoamSwitch 1.9.25+; an older install answers "Unknown tool",
+    /// which surfaces as `.toolError` — skip rather than fail in that case.
+    func testIncidentTimeline() async throws {
+        let client = try makeClientOrSkip()
+        let timeline: IncidentTimeline
+        do {
+            timeline = try await client.incidentTimeline(limit: 10)
+        } catch RoamSwitchClientError.toolError(let message) {
+            throw XCTSkip("Installed RoamSwitch predates get_incident_timeline: \(message)")
+        }
+        XCTAssertLessThanOrEqual(timeline.events.count, 10)
+        XCTAssertEqual(timeline.unresolvedCount, timeline.events.filter { $0.status == "open" }.count)
+    }
+
+    func testNetworkHistory() async throws {
+        let client = try makeClientOrSkip()
+        let history: NetworkHistory
+        do {
+            history = try await client.networkHistory(limit: 5)
+        } catch RoamSwitchClientError.toolError(let message) {
+            throw XCTSkip("Installed RoamSwitch predates get_network_history: \(message)")
+        }
+        XCTAssertLessThanOrEqual(history.networks.count, 5)
+        XCTAssertGreaterThanOrEqual(history.knownNetworkCount, history.networks.count)
+    }
+
+    // MARK: - Decoding (no RoamSwitch install needed)
+
+    private func toolResult(_ json: String) -> [String: Any] {
+        ["content": [["type": "text", "text": json]]]
+    }
+
+    /// A pre-1.9.25 server sends only the original five GuardStatus fields
+    /// and no `usingDefault` — that must still decode, with the new fields nil.
+    func testGuardStatusDecodesLegacyShape() throws {
+        let legacy = #"{"activeSecurityLevel":"lockdown","activeSecurityLevelLabel":"Lockdown","isCurrentNetworkTrusted":false,"guards":[{"key":"dnsThreatGuard","enabledInSettings":true}],"caveats":[]}"#
+        let status = try JSONRPCTransport.decodeContent(GuardStatus.self, from: toolResult(legacy))
+        XCTAssertEqual(status.guards.first?.key, "dnsThreatGuard")
+        XCTAssertNil(status.guards.first?.usingDefault)
+        XCTAssertNil(status.linkGuardMode)
+        XCTAssertNil(status.isolatedDevPorts)
+    }
+
+    func testGuardStatusDecodesExtendedShape() throws {
+        let json = #"{"activeSecurityLevel":"open","activeSecurityLevelLabel":"Open","isCurrentNetworkTrusted":true,"guards":[{"key":"linkGuard","enabledInSettings":true,"usingDefault":false}],"linkGuardMode":"warn","vpnBackend":"tailscale","tailscaleExitNodeConfigured":true,"dnsThreatGuardProvider":"adguard","dnsThreatGuardScope":"always","isolatedDevPorts":[3000],"usbStorageAllowedVolumeCount":2,"caveats":["c"]}"#
+        let status = try JSONRPCTransport.decodeContent(GuardStatus.self, from: toolResult(json))
+        XCTAssertEqual(status.guards.first?.usingDefault, false)
+        XCTAssertEqual(status.linkGuardMode, "warn")
+        XCTAssertEqual(status.vpnBackend, "tailscale")
+        XCTAssertEqual(status.tailscaleExitNodeConfigured, true)
+        XCTAssertEqual(status.dnsThreatGuardProvider, "adguard")
+        XCTAssertEqual(status.dnsThreatGuardScope, "always")
+        XCTAssertEqual(status.isolatedDevPorts, [3000])
+        XCTAssertEqual(status.usbStorageAllowedVolumeCount, 2)
+    }
+
+    func testLinkRiskFactorKindIsOptional() throws {
+        let legacy = #"{"originalURL":"a","finalURL":"a","redirectChain":[],"domain":"a","score":10,"riskLevel":"dangerous","isHTTPS":true,"riskFactors":[{"title":"t","detail":"d","isSevere":true}]}"#
+        XCTAssertNil(try JSONRPCTransport.decodeContent(LinkAuditReport.self, from: toolResult(legacy)).riskFactors.first?.kind)
+        let current = legacy.replacingOccurrences(of: #""isSevere":true}"#, with: #""isSevere":true,"kind":"homograph"}"#)
+        XCTAssertEqual(try JSONRPCTransport.decodeContent(LinkAuditReport.self, from: toolResult(current)).riskFactors.first?.kind, "homograph")
+    }
+
+    func testIncidentTimelineDecodes() throws {
+        let json = #"{"unresolvedCount":1,"events":[{"id":"8D3F","timestamp":"2026-09-14T00:00:00Z","source":"arpSpoof","sourceLabel":"ARP","severity":"critical","summary":"s","attackTechnique":"T1557","actionTaken":"air_gap","actionTakenLabel":"Air-Gap","status":"open"}],"caveats":[]}"#
+        let timeline = try JSONRPCTransport.decodeContent(IncidentTimeline.self, from: toolResult(json))
+        XCTAssertEqual(timeline.events.first?.source, "arpSpoof")
+        XCTAssertNil(timeline.events.first?.processID)
+        XCTAssertNil(timeline.events.first?.resolvedAt)
+    }
+
+    func testNetworkHistoryDecodes() throws {
+        let json = #"{"knownNetworkCount":2,"networks":[{"ssid":"CafeWiFi","gatewayCount":1,"lastSeen":"2026-09-14T00:00:00Z"}],"lookalikePairs":[{"ssid":"CafeWiFi","similarTo":"CafeWlFi","editDistance":1}],"caveats":[]}"#
+        let history = try JSONRPCTransport.decodeContent(NetworkHistory.self, from: toolResult(json))
+        XCTAssertEqual(history.lookalikePairs.first?.editDistance, 1)
+    }
+
+    func testAppHelpResultDecodesWithAndWithoutLanguage() throws {
+        let json = #"{"query":"ARP","topic":"feature","totalResults":1,"items":[{"id":"x","topic":"feature","title":"t","summary":"s","details":"d","tags":[]}]}"#
+        XCTAssertNil(try JSONRPCTransport.decodeContent(AppHelpResult.self, from: toolResult(json)).language)
+        let withLang = json.replacingOccurrences(of: #""totalResults":1"#, with: #""totalResults":1,"language":"en""#)
+        XCTAssertEqual(try JSONRPCTransport.decodeContent(AppHelpResult.self, from: toolResult(withLang)).language, "en")
+    }
+
+    func testDocResourceResultsDecode() throws {
+        let list = try JSONRPCTransport.decodeResult(DocResourceList.self, from: [
+            "resources": [["uri": "roamswitch://docs/features", "name": "n", "description": "d", "mimeType": "text/markdown"]],
+        ])
+        XCTAssertEqual(list.resources.first?.uri, "roamswitch://docs/features")
+        let read = try JSONRPCTransport.decodeResult(DocResourceReadResult.self, from: [
+            "contents": [["uri": "roamswitch://docs/features", "mimeType": "text/markdown", "text": "# Features"]],
+        ])
+        XCTAssertEqual(read.contents.first?.text, "# Features")
+    }
 }

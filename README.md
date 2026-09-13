@@ -33,7 +33,7 @@ Typical uses: a sync app pausing background transfers on an untrusted network, a
 
 - macOS 12+
 - Swift 5.9+ (Xcode 15+)
-- [RoamSwitch](https://lafine.net) 1.3.0 or later installed on the machine your code runs on (RoamSwitchMCPServer, the binary this package talks to, first shipped in that release)
+- [RoamSwitch](https://lafine.net) 1.3.0 or later installed on the machine your code runs on (RoamSwitchMCPServer, the binary this package talks to, first shipped in that release). Several methods need a newer release — see [Minimum RoamSwitch version per method](#minimum-roamswitch-version-per-method). Calling a method the installed app doesn't support throws `RoamSwitchClientError.toolError` (the server answers "Unknown tool").
 
 ## Installation
 
@@ -132,6 +132,39 @@ let notifications = try await client.notificationHistory()
 for entry in notifications {
     print(entry.timestamp, entry.title)
 }
+
+// Secret-leak scan of a snippet, a file, or a directory (matches are masked).
+let secrets = try await client.auditSecrets(path: "/Users/me/code/my-app")
+print(secrets.findings.map(\.type))
+
+// Malware quarantine vault contents.
+let vault = try await client.quarantineStatus()
+print(vault.files.count, "quarantined file(s)")
+
+// Bundled knowledge base. `topic` identifiers are language-independent;
+// results come back in RoamSwitch's current UI language.
+let help = try await client.appHelp(query: "Helper not connected", topic: .troubleshooting)
+print(help.items.first?.recommendation ?? "")
+
+// One chronological view across ARP-spoof, ransomware-canary, runtime-threat
+// and port-anomaly containments — ARP containment is recorded only here.
+// (RoamSwitch 1.9.25+)
+let timeline = try await client.incidentTimeline(limit: 20)
+for event in timeline.events where event.status == "open" {
+    print(event.timestamp, event.source, event.summary)
+}
+
+// Remembered Wi-Fi networks and look-alike (Evil-Twin candidate) SSID pairs.
+// Gateway MAC addresses are never returned. (RoamSwitch 1.9.25+)
+let networks = try await client.networkHistory()
+for pair in networks.lookalikePairs {
+    print("\(pair.ssid) looks like \(pair.similarTo)")
+}
+
+// The bundled roamswitch://docs/* Markdown documents (MCP resources).
+for doc in try await client.docResources() {
+    print(doc.uri, doc.name)
+}
 ```
 
 All calls are `async throws` and can fail with `RoamSwitchClientError` — most commonly `.appNotInstalled` if RoamSwitch isn't present. Handle that case gracefully (e.g. hide the feature, or point the user to lafine.net) rather than treating it as fatal.
@@ -170,6 +203,14 @@ public actor RoamSwitchClient {
     public func portAnomalyIncidents() async throws -> PortAnomalyIncidentsSummary
     public func runtimeThreatStatus() async throws -> RuntimeThreatStatus
     public func notificationHistory() async throws -> [NotificationHistoryEntry]
+    public func auditSecrets(text: String) async throws -> SecretAuditResult
+    public func auditSecrets(path: String) async throws -> SecretAuditResult
+    public func quarantineStatus() async throws -> QuarantineStatus
+    public func appHelp(query: String? = nil, topic: AppHelpTopic? = nil) async throws -> AppHelpResult
+    public func incidentTimeline(limit: Int = 50) async throws -> IncidentTimeline
+    public func networkHistory(limit: Int = 50) async throws -> NetworkHistory
+    public func docResources() async throws -> [DocResource]
+    public func readDocResource(uri: String) async throws -> DocResourceContent
 }
 ```
 
@@ -188,6 +229,24 @@ public actor RoamSwitchClient {
 - `portAnomalyIncidents()` — Port Anomaly Guard (Pro): baseline/auto-isolated-port state plus up to the 50 most recent incidents (previously-unseen executables that started listening on an externally-exposed port). Reads only local state (works during a network Air-Gap).
 - `runtimeThreatStatus()` — Runtime Threat Containment (Pro): whether this Mac is currently Air-Gapped due to an Apple XProtect malware conviction, and the single most recent triggering incident. Reads only local state (works during a network Air-Gap) — check this first to understand an active Air-Gap's cause.
 - `notificationHistory()` — every notification RoamSwitch has sent over the past 7 days (log-audit anomalies, ClickFix detections, and the like), most recent first. Reads only local state (works during a network Air-Gap).
+- `auditSecrets(text:)` / `auditSecrets(path:)` — scans a snippet, or a file / directory (recursively) at an absolute path, for exposed API keys (OpenAI, Anthropic, GitHub, AWS, HuggingFace, Google AI/Gemini, Slack, Stripe) and SSH/RSA private keys. Matches are masked. A missing path throws `.toolError`. No network.
+- `quarantineStatus()` — the malware quarantine vault: original path, ClamAV threat name, time and size per file. Files are moved there, never deleted. Reads only local state.
+- `appHelp(query:topic:)` — searches the bundled knowledge base (features, alert messages, settings, troubleshooting). `query` can be in any language or be a fragment of an alert's text; `topic` (`AppHelpTopic`) uses language-independent identifiers. Content is returned in RoamSwitch's current UI language.
+- `incidentTimeline(limit:)` — one chronological view (newest first, 1–200 events) across ARP spoofing auto-containment, the Ransomware Canary Guard, Runtime Threat Containment and the Port Anomaly Guard. ARP containment is recorded only here. Reads only local state (works during a network Air-Gap).
+- `networkHistory(limit:)` — the always-on Evil-Twin detector's memory: remembered SSIDs with a gateway-device count and last-seen time (never MAC addresses), plus look-alike SSID pairs that never shared a gateway. Reads only local state.
+- `docResources()` / `readDocResource(uri:)` — lists and reads the bundled `roamswitch://docs/*` Markdown documents (MCP `resources/list` / `resources/read`). An unknown URI throws `.toolError`.
+
+### Minimum RoamSwitch version per method
+
+| Method | Needs RoamSwitch |
+|---|---|
+| `securityReport()`, `exposedPorts(includeLocalOnly:)`, `guardStatus()`, `auditURLSafety(url:)` | 1.3.0+ |
+| `appHelp(query:topic:)`, `docResources()`, `readDocResource(uri:)` | 1.4.4+ |
+| `auditSecrets(text:)`, `auditSecrets(path:)`, `auditSecurityLogs(hours:)`, `quarantineStatus()`, `activeVulnScan()`, `packageCveScan()`, `packageCveScanLanguages(watchedFolders:)`, `canaryStatus()` | 1.8.9+ |
+| `portAnomalyIncidents()`, `runtimeThreatStatus()` | 1.9.2+ |
+| `notificationHistory()` | 1.9.8+ |
+| `incidentTimeline(limit:)`, `networkHistory(limit:)` | 1.9.25+ |
+| Extended `GuardStatus` fields (`usingDefault`, `linkGuardMode`, `vpnBackend`, …) and `LinkRiskFactor.kind` | 1.9.25+ (older apps leave them `nil`) |
 
 ### `SecurityReport`
 
@@ -220,10 +279,17 @@ public actor RoamSwitchClient {
 | `activeSecurityLevel` | `String` | Raw level identifier (`"open"` / `"balanced"` / `"lockdown"`) |
 | `activeSecurityLevelLabel` | `String` | Localized display name |
 | `isCurrentNetworkTrusted` | `Bool` | Whether the current gateway matches a saved trusted network |
-| `guards` | `[GuardEntry]` | One entry per optional guard: `portAnomalyGuard`, `arpSpoofAutoContainment`, `usbKeyboardGuard`, `usbStorageGuard`, `bluetoothGuard`, `webMailDownloadGuard`, `dnsThreatGuard`, `runtimeThreatContainment` |
-| `caveats` | `[String]` | Notes — in particular, that `enabledInSettings` reflects the Settings toggle only; actual guard behavior also depends on RoamSwitch Pro license state, which this tool (running as a separate process) can't verify |
+| `guards` | `[GuardEntry]` | One entry per guard setting. Since 1.9.25 (22 entries): `portAnomalyGuard`, `arpSpoofAutoContainment`, `usbKeyboardGuard`, `usbStorageGuard`, `bluetoothGuard`, `webMailDownloadGuard`, `dnsThreatGuard`, `runtimeThreatContainment`, `ransomwareCanaryGuard`, `clickFixGuard`, `dockerEventGuard`, `criticalPathFim`, `persistenceMonitor`, `gatewayARPLock`, `scheduledLogAudit`, `secretLeakClipboardAuditor`, `airGapAutoWiFiKill`, `wireGuardVPN`, `tailscaleKillSwitch`, `linkGuard`, `linkGuardFeedUpdates`, `activeVulnScan`. Older apps return only the first eight. Treat the list as open-ended |
+| `caveats` | `[String]` | Notes: `enabledInSettings` reflects the Settings toggle only (actual behavior also depends on Pro license state, which a separate process can't verify); some guards switch on automatically, once, at Pro activation; live VPN tunnel / kill-switch state isn't readable |
+| `linkGuardMode` | `String?` | `"off"` / `"warn"` (pause the connection and ask; blocked if unanswered) / `"block"`. 1.9.25+ |
+| `vpnBackend` | `String?` | `"wireguard"` / `"tailscale"`. 1.9.25+ |
+| `tailscaleExitNodeConfigured` | `Bool?` | Whether a Tailscale exit node is chosen. 1.9.25+ |
+| `dnsThreatGuardProvider` | `String?` | `"quad9"` / `"cloudflareSecurity"` / `"adguard"` / `"cleanBrowsing"`. 1.9.25+ |
+| `dnsThreatGuardScope` | `String?` | `"awayOnly"` / `"always"`. 1.9.25+ |
+| `isolatedDevPorts` | `[Int]?` | Dev-server ports the user isolated from the LAN, ascending. 1.9.25+ |
+| `usbStorageAllowedVolumeCount` | `Int?` | Size of the USB storage allowlist. 1.9.25+ |
 
-`GuardEntry`: `key: String`, `enabledInSettings: Bool`.
+`GuardEntry`: `key: String`, `enabledInSettings: Bool`, `usingDefault: Bool?` (`true` = the user never toggled it, so the value is the guard's built-in default; `nil` before 1.9.25).
 
 ### `LinkAuditReport`
 
@@ -238,7 +304,7 @@ public actor RoamSwitchClient {
 | `isHTTPS` | `Bool` | Whether the final URL uses HTTPS |
 | `riskFactors` | `[LinkRiskFactor]` | Specific findings — Unicode homograph spoofing, brand-name subdomain deception, high-risk TLDs, plaintext HTTP, etc. |
 
-`LinkRiskFactor`: `title`, `detail`, `isSevere: Bool`.
+`LinkRiskFactor`: `title`, `detail`, `isSevere: Bool`, `kind: String?` — a language-independent identifier (`"invalidURL"`, `"plaintextHTTP"`, `"ipAddressHost"`, `"homograph"`, `"brandSubdomainSpoofing"`, `"highRiskTLD"`, `"nonStandardPort"`, `"phishingPathKeyword"`; `nil` before 1.9.25). `title`/`detail` are localized to RoamSwitch's UI language, so match on `kind`, never on `title`.
 
 ### `SecurityLogAudit`
 
@@ -330,6 +396,66 @@ Mac equivalent of the Linux client's eBPF Runtime Guard — fires when Apple's o
 | `title` | `String` | The notification's title |
 | `body` | `String` | The notification's body text |
 
+### `SecretAuditResult`
+
+| Field | Type | Description |
+|---|---|---|
+| `findings` | `[SecretFinding]` | One entry per detected secret |
+
+`SecretFinding`: `type` (detector identifier), `lineNumber: Int`, `masked` (the match with most characters masked — the raw secret never leaves RoamSwitch), `entropy: Double` (Shannon entropy), `filePath: String?` (set when scanning a path).
+
+### `QuarantineStatus`
+
+| Field | Type | Description |
+|---|---|---|
+| `quarantineDirectory` | `String` | Absolute path of the vault |
+| `files` | `[QuarantinedFile]` | Everything currently quarantined |
+
+`QuarantinedFile`: `originalPath`, `quarantinedPath`, `threatName` (as reported by ClamAV), `quarantinedAt: String` (ISO 8601), `fileSize: Int64`.
+
+### `AppHelpResult`
+
+| Field | Type | Description |
+|---|---|---|
+| `query` | `String?` | The query, echoed back |
+| `topic` | `String?` | The topic filter, echoed back |
+| `totalResults` | `Int` | `items.count` |
+| `items` | `[KnowledgeItem]` | Matching entries, best match first |
+| `language` | `String?` | Language the content was returned in (e.g. `"en"`); `nil` from older apps |
+
+`KnowledgeItem`: `id`, `topic` (`"feature"` / `"alert_message"` / `"setting"` / `"troubleshooting"`), `title`, `summary`, `details`, `recommendation: String?`, `tags: [String]`.
+
+`AppHelpTopic`: `.all`, `.feature`, `.alertMessage` (`"alert_message"`), `.setting`, `.troubleshooting`.
+
+### `IncidentTimeline`
+
+| Field | Type | Description |
+|---|---|---|
+| `unresolvedCount` | `Int` | Events in `events` whose `status` is `"open"` |
+| `events` | `[IncidentTimelineEvent]` | Newest first |
+| `caveats` | `[String]` | E.g. `summary` is stored in the display language active at detection time |
+
+`IncidentTimelineEvent`: `id`, `timestamp: String` (ISO 8601), `source` (`"arpSpoof"` / `"ransomwareCanary"` / `"runtimeThreat"` / `"portAnomaly"`), `sourceLabel` (localized), `severity`, `summary`, `processName: String?`, `processID: Int32?`, `attackTechnique: String?` (MITRE ATT&CK ID, only where confidently mappable), `actionTaken` (`"air_gap"` / `"port_block"` / …), `actionTakenLabel` (localized), `status` (`"open"` / `"released"` / `"autoTimeout"` / `"allowlisted"`), `resolvedAt: String?` (ISO 8601).
+
+### `NetworkHistory`
+
+| Field | Type | Description |
+|---|---|---|
+| `knownNetworkCount` | `Int` | All remembered SSIDs (not capped by `limit`) |
+| `networks` | `[KnownNetwork]` | Most recently seen first, capped by `limit` |
+| `lookalikePairs` | `[LookalikeNetworkPair]` | Always complete |
+| `caveats` | `[String]` | Notes on what is (not) returned |
+
+`KnownNetwork`: `ssid`, `gatewayCount: Int` (distinct gateway devices — MAC addresses are never returned), `lastSeen: String` (ISO 8601).
+
+`LookalikeNetworkPair`: `ssid`, `similarTo`, `editDistance: Int` — two remembered SSIDs with suspiciously similar names that never shared a gateway device (a past Evil-Twin candidate).
+
+### `DocResource` / `DocResourceContent`
+
+`DocResource`: `uri` (e.g. `roamswitch://docs/features`), `name`, `description`, `mimeType`.
+
+`DocResourceContent`: `uri`, `mimeType` (`"text/markdown"`), `text`.
+
 ### `RoamSwitchClientError`
 
 | Case | Meaning |
@@ -340,7 +466,7 @@ Mac equivalent of the Linux client's eBPF Runtime Guard — fires when Apple's o
 | `.noResponse` | The subprocess's stdout closed before a response arrived |
 | `.timedOut` | The subprocess didn't respond within `timeout` and was terminated |
 | `.invalidResponse(raw:)` | A response was received but wasn't valid/expected JSON-RPC |
-| `.toolError(message:)` | The server returned a JSON-RPC error or a tool result with `isError: true` |
+| `.toolError(message:)` | The server returned a JSON-RPC error or a tool result with `isError: true` — including "Unknown tool" when the installed RoamSwitch predates the method (see the version table) |
 
 All cases conform to `LocalizedError`, so `error.localizedDescription` gives a human-readable message.
 

@@ -55,14 +55,31 @@ public struct ExposedPorts: Codable, Equatable, Sendable {
 public struct GuardEntry: Codable, Equatable, Sendable {
     public let key: String
     public let enabledInSettings: Bool
+    /// `true` when the user never toggled this setting, so
+    /// `enabledInSettings` is the guard's built-in default. `nil` from
+    /// RoamSwitch builds older than 1.9.25.
+    public let usingDefault: Bool?
 }
 
+/// Every property after `guards` except `caveats` is optional: RoamSwitch
+/// builds older than 1.9.25 don't send them.
 public struct GuardStatus: Codable, Equatable, Sendable {
     public let activeSecurityLevel: String
     public let activeSecurityLevelLabel: String
     public let isCurrentNetworkTrusted: Bool
     public let guards: [GuardEntry]
     public let caveats: [String]
+    /// `"off"` | `"warn"` (pause and ask; blocked if unanswered) | `"block"`.
+    public let linkGuardMode: String?
+    /// `"wireguard"` | `"tailscale"`.
+    public let vpnBackend: String?
+    public let tailscaleExitNodeConfigured: Bool?
+    /// `"quad9"` | `"cloudflareSecurity"` | `"adguard"` | `"cleanBrowsing"`.
+    public let dnsThreatGuardProvider: String?
+    /// `"awayOnly"` | `"always"`.
+    public let dnsThreatGuardScope: String?
+    public let isolatedDevPorts: [Int]?
+    public let usbStorageAllowedVolumeCount: Int?
 }
 
 
@@ -70,6 +87,11 @@ public struct LinkRiskFactor: Codable, Equatable, Sendable {
     public let title: String
     public let detail: String
     public let isSevere: Bool
+    /// Language-independent identifier — `"invalidURL"`, `"plaintextHTTP"`,
+    /// `"ipAddressHost"`, `"homograph"`, `"brandSubdomainSpoofing"`,
+    /// `"highRiskTLD"`, `"nonStandardPort"`, `"phishingPathKeyword"`. Match on
+    /// this, never on the localized `title`. `nil` before RoamSwitch 1.9.25.
+    public let kind: String?
 }
 
 public struct LinkAuditReport: Codable, Equatable, Sendable {
@@ -219,4 +241,153 @@ public struct NotificationHistoryEntry: Codable, Equatable, Sendable {
 
 struct NotificationHistoryWrapper: Codable, Sendable {
     let notifications: [NotificationHistoryEntry]
+}
+
+// MARK: - audit_secrets
+
+public struct SecretFinding: Codable, Equatable, Sendable {
+    /// Detector identifier, e.g. an API-key provider or private-key type.
+    public let type: String
+    public let lineNumber: Int
+    /// The matched value with most characters masked — the raw secret never
+    /// leaves RoamSwitch.
+    public let masked: String
+    /// Shannon entropy of the match.
+    public let entropy: Double
+    public let filePath: String?
+}
+
+public struct SecretAuditResult: Codable, Equatable, Sendable {
+    public let findings: [SecretFinding]
+}
+
+// MARK: - get_quarantine_status
+
+public struct QuarantinedFile: Codable, Equatable, Sendable {
+    public let originalPath: String
+    public let quarantinedPath: String
+    public let threatName: String
+    /// ISO 8601
+    public let quarantinedAt: String
+    public let fileSize: Int64
+}
+
+public struct QuarantineStatus: Codable, Equatable, Sendable {
+    public let quarantineDirectory: String
+    public let files: [QuarantinedFile]
+}
+
+// MARK: - get_app_help
+
+/// Topic filter for `appHelp(query:topic:)`. Raw values are the server's
+/// wire identifiers and are the same in every UI language.
+public enum AppHelpTopic: String, Codable, CaseIterable, Sendable {
+    case all
+    case feature
+    case alertMessage = "alert_message"
+    case setting
+    case troubleshooting
+}
+
+public struct KnowledgeItem: Codable, Equatable, Sendable {
+    public let id: String
+    public let topic: String
+    public let title: String
+    public let summary: String
+    public let details: String
+    public let recommendation: String?
+    public let tags: [String]
+}
+
+public struct AppHelpResult: Codable, Equatable, Sendable {
+    public let query: String?
+    public let topic: String?
+    public let totalResults: Int
+    public let items: [KnowledgeItem]
+    /// Language the knowledge-base content was returned in (e.g. `"ja"`,
+    /// `"en"`). `nil` from older RoamSwitch builds.
+    public let language: String?
+}
+
+// MARK: - get_incident_timeline
+
+public struct IncidentTimelineEvent: Codable, Equatable, Sendable {
+    public let id: String
+    /// ISO 8601
+    public let timestamp: String
+    /// `"arpSpoof"` | `"ransomwareCanary"` | `"runtimeThreat"` | `"portAnomaly"`
+    public let source: String
+    /// Localized display name for `source`.
+    public let sourceLabel: String
+    public let severity: String
+    /// Recorded in the app's display language at detection time.
+    public let summary: String
+    public let processName: String?
+    public let processID: Int32?
+    /// MITRE ATT&CK technique ID — only set where confidently mappable.
+    public let attackTechnique: String?
+    /// `"air_gap"` | `"port_block"` | ...
+    public let actionTaken: String
+    public let actionTakenLabel: String
+    /// `"open"` | `"released"` | `"autoTimeout"` | `"allowlisted"`
+    public let status: String
+    /// ISO 8601
+    public let resolvedAt: String?
+}
+
+public struct IncidentTimeline: Codable, Equatable, Sendable {
+    public let unresolvedCount: Int
+    /// Newest first.
+    public let events: [IncidentTimelineEvent]
+    public let caveats: [String]
+}
+
+// MARK: - get_network_history
+
+public struct KnownNetwork: Codable, Equatable, Sendable {
+    public let ssid: String
+    /// Distinct gateway devices seen answering for this SSID (the MAC
+    /// addresses themselves are never returned).
+    public let gatewayCount: Int
+    /// ISO 8601
+    public let lastSeen: String
+}
+
+/// Two remembered SSIDs with suspiciously similar names that never shared a
+/// gateway device — a past Evil-Twin access point candidate.
+public struct LookalikeNetworkPair: Codable, Equatable, Sendable {
+    public let ssid: String
+    public let similarTo: String
+    public let editDistance: Int
+}
+
+public struct NetworkHistory: Codable, Equatable, Sendable {
+    public let knownNetworkCount: Int
+    /// Most recently seen first, capped by the requested limit.
+    public let networks: [KnownNetwork]
+    public let lookalikePairs: [LookalikeNetworkPair]
+    public let caveats: [String]
+}
+
+// MARK: - resources/list, resources/read
+
+public struct DocResource: Codable, Equatable, Sendable {
+    public let uri: String
+    public let name: String
+    public let description: String
+    public let mimeType: String
+}
+
+public struct DocResourceContent: Codable, Equatable, Sendable {
+    public let uri: String
+    public let mimeType: String
+    public let text: String
+}
+
+struct DocResourceList: Codable, Sendable {
+    let resources: [DocResource]
+}
+
+struct DocResourceReadResult: Codable, Sendable {
+    let contents: [DocResourceContent]
 }

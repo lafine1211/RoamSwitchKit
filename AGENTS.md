@@ -9,7 +9,7 @@ A read-only Swift client for RoamSwitch (a macOS network-security menu bar app, 
 ## Requirements
 
 - macOS 12+, Swift 5.9+
-- RoamSwitch 1.3.0+ must be installed on the machine the code runs on. If it isn't, every call throws `RoamSwitchClientError.appNotInstalled` — this is an expected, normal condition, not a bug. Code that calls this package should catch it and degrade gracefully (skip the feature / show a message), never treat it as fatal or force-unwrap.
+- RoamSwitch 1.3.0+ must be installed on the machine the code runs on (several methods need a newer release — see "Minimum RoamSwitch version per method" below; calling one against an older app throws `RoamSwitchClientError.toolError`). If it isn't, every call throws `RoamSwitchClientError.appNotInstalled` — this is an expected, normal condition, not a bug. Code that calls this package should catch it and degrade gracefully (skip the feature / show a message), never treat it as fatal or force-unwrap.
 
 ## Installation
 
@@ -45,8 +45,28 @@ public actor RoamSwitchClient {
     public func portAnomalyIncidents() async throws -> PortAnomalyIncidentsSummary
     public func runtimeThreatStatus() async throws -> RuntimeThreatStatus
     public func notificationHistory() async throws -> [NotificationHistoryEntry]
+    public func auditSecrets(text: String) async throws -> SecretAuditResult
+    public func auditSecrets(path: String) async throws -> SecretAuditResult   // absolute file or directory path
+    public func quarantineStatus() async throws -> QuarantineStatus
+    public func appHelp(query: String? = nil, topic: AppHelpTopic? = nil) async throws -> AppHelpResult
+    public func incidentTimeline(limit: Int = 50) async throws -> IncidentTimeline   // limit 1-200
+    public func networkHistory(limit: Int = 50) async throws -> NetworkHistory              // limit 1-200
+    public func docResources() async throws -> [DocResource]                                // MCP resources/list
+    public func readDocResource(uri: String) async throws -> DocResourceContent             // MCP resources/read
 }
 ```
+
+### Minimum RoamSwitch version per method
+
+| Method | Needs RoamSwitch |
+|---|---|
+| `securityReport`, `exposedPorts`, `guardStatus`, `auditURLSafety` | 1.3.0+ |
+| `appHelp`, `docResources`, `readDocResource` | 1.4.4+ |
+| `auditSecrets`, `auditSecurityLogs`, `quarantineStatus`, `activeVulnScan`, `packageCveScan`, `packageCveScanLanguages`, `canaryStatus` | 1.8.9+ |
+| `portAnomalyIncidents`, `runtimeThreatStatus` | 1.9.2+ |
+| `notificationHistory` | 1.9.8+ |
+| `incidentTimeline`, `networkHistory` | 1.9.25+ |
+| Optional `GuardStatus`/`GuardEntry` fields added in 1.9.25, `LinkRiskFactor.kind` | 1.9.25+ (`nil` on older apps — never force-unwrap) |
 
 `timeout` is a per-call wall-clock ceiling (default 30s). If RoamSwitchMCPServer
 doesn't answer in time it is terminated and the call throws
@@ -119,13 +139,27 @@ public struct GuardStatus: Codable, Equatable, Sendable {
     public let activeSecurityLevel: String        // "open" | "balanced" | "lockdown"
     public let activeSecurityLevelLabel: String    // localized display name
     public let isCurrentNetworkTrusted: Bool
-    public let guards: [GuardEntry]                // keys: portAnomalyGuard, arpSpoofAutoContainment, usbKeyboardGuard, usbStorageGuard, bluetoothGuard, webMailDownloadGuard, dnsThreatGuard, runtimeThreatContainment
+    public let guards: [GuardEntry]                // see keys below — treat as open-ended, look up by key
     public let caveats: [String]
+    // Added in RoamSwitch 1.9.25 — nil on older apps:
+    public let linkGuardMode: String?              // "off" | "warn" (pause + ask, blocked if unanswered) | "block"
+    public let vpnBackend: String?                 // "wireguard" | "tailscale"
+    public let tailscaleExitNodeConfigured: Bool?
+    public let dnsThreatGuardProvider: String?     // "quad9" | "cloudflareSecurity" | "adguard" | "cleanBrowsing"
+    public let dnsThreatGuardScope: String?        // "awayOnly" | "always"
+    public let isolatedDevPorts: [Int]?
+    public let usbStorageAllowedVolumeCount: Int?
 }
 
+// guards keys (1.3.0+): portAnomalyGuard, arpSpoofAutoContainment, usbKeyboardGuard, usbStorageGuard,
+//   bluetoothGuard, webMailDownloadGuard, dnsThreatGuard, runtimeThreatContainment
+// added in 1.9.25: ransomwareCanaryGuard, clickFixGuard, dockerEventGuard, criticalPathFim,
+//   persistenceMonitor, gatewayARPLock, scheduledLogAudit, secretLeakClipboardAuditor, airGapAutoWiFiKill,
+//   wireGuardVPN, tailscaleKillSwitch, linkGuard, linkGuardFeedUpdates, activeVulnScan
 public struct GuardEntry: Codable, Equatable, Sendable {
     public let key: String
     public let enabledInSettings: Bool
+    public let usingDefault: Bool?                 // true = never toggled (value is the built-in default); nil before 1.9.25
 }
 ```
 
@@ -144,9 +178,10 @@ public struct LinkAuditReport: Codable, Equatable, Sendable {
 }
 
 public struct LinkRiskFactor: Codable, Equatable, Sendable {
-    public let title: String
+    public let title: String           // localized — do NOT match on it
     public let detail: String
     public let isSevere: Bool
+    public let kind: String?           // language-independent: "invalidURL" | "plaintextHTTP" | "ipAddressHost" | "homograph" | "brandSubdomainSpoofing" | "highRiskTLD" | "nonStandardPort" | "phishingPathKeyword"; nil before 1.9.25
 }
 ```
 
@@ -291,6 +326,121 @@ public struct NotificationHistoryEntry: Codable, Equatable, Sendable {
 }
 ```
 
+### `SecretAuditResult` / `QuarantineStatus` / `AppHelpResult`
+
+```swift
+public struct SecretAuditResult: Codable, Equatable, Sendable {
+    public let findings: [SecretFinding]
+}
+
+public struct SecretFinding: Codable, Equatable, Sendable {
+    public let type: String            // detector identifier
+    public let lineNumber: Int
+    public let masked: String          // raw secret never leaves RoamSwitch
+    public let entropy: Double
+    public let filePath: String?
+}
+
+public struct QuarantineStatus: Codable, Equatable, Sendable {
+    public let quarantineDirectory: String
+    public let files: [QuarantinedFile]
+}
+
+public struct QuarantinedFile: Codable, Equatable, Sendable {
+    public let originalPath: String
+    public let quarantinedPath: String
+    public let threatName: String
+    public let quarantinedAt: String    // ISO 8601
+    public let fileSize: Int64
+}
+
+public enum AppHelpTopic: String, Codable, CaseIterable, Sendable {
+    case all, feature, alertMessage = "alert_message", setting, troubleshooting
+}
+
+public struct AppHelpResult: Codable, Equatable, Sendable {
+    public let query: String?
+    public let topic: String?
+    public let totalResults: Int
+    public let items: [KnowledgeItem]
+    public let language: String?        // language the content came back in; nil on older apps
+}
+
+public struct KnowledgeItem: Codable, Equatable, Sendable {
+    public let id: String
+    public let topic: String            // "feature" | "alert_message" | "setting" | "troubleshooting"
+    public let title: String
+    public let summary: String
+    public let details: String
+    public let recommendation: String?
+    public let tags: [String]
+}
+```
+
+### `IncidentTimeline` / `NetworkHistory` (RoamSwitch 1.9.25+)
+
+Both read only local files — no network — so they also work during an Air-Gap.
+
+```swift
+public struct IncidentTimeline: Codable, Equatable, Sendable {
+    public let unresolvedCount: Int
+    public let events: [IncidentTimelineEvent]   // newest first
+    public let caveats: [String]
+}
+
+public struct IncidentTimelineEvent: Codable, Equatable, Sendable {
+    public let id: String
+    public let timestamp: String          // ISO 8601
+    public let source: String             // "arpSpoof" | "ransomwareCanary" | "runtimeThreat" | "portAnomaly"
+    public let sourceLabel: String        // localized
+    public let severity: String
+    public let summary: String            // stored in the display language active at detection time
+    public let processName: String?
+    public let processID: Int32?
+    public let attackTechnique: String?   // MITRE ATT&CK ID, only when confidently mappable
+    public let actionTaken: String        // "air_gap" | "port_block" | ...
+    public let actionTakenLabel: String   // localized
+    public let status: String             // "open" | "released" | "autoTimeout" | "allowlisted"
+    public let resolvedAt: String?        // ISO 8601
+}
+
+public struct NetworkHistory: Codable, Equatable, Sendable {
+    public let knownNetworkCount: Int
+    public let networks: [KnownNetwork]              // most recently seen first, capped by limit
+    public let lookalikePairs: [LookalikeNetworkPair] // always complete
+    public let caveats: [String]
+}
+
+public struct KnownNetwork: Codable, Equatable, Sendable {
+    public let ssid: String
+    public let gatewayCount: Int          // MAC addresses are never returned
+    public let lastSeen: String           // ISO 8601
+}
+
+public struct LookalikeNetworkPair: Codable, Equatable, Sendable {  // Evil-Twin candidate
+    public let ssid: String
+    public let similarTo: String
+    public let editDistance: Int
+}
+```
+
+### `DocResource` / `DocResourceContent`
+
+```swift
+public struct DocResource: Codable, Equatable, Sendable {
+    public let uri: String                // e.g. "roamswitch://docs/features"
+    public let name: String
+    public let description: String
+    public let mimeType: String
+}
+
+public struct DocResourceContent: Codable, Equatable, Sendable {
+    public let uri: String
+    public let mimeType: String           // "text/markdown"
+    public let text: String
+}
+```
+
 ### `RoamSwitchClientError`
 
 ```swift
@@ -305,7 +455,7 @@ public enum RoamSwitchClientError: Error, LocalizedError, Sendable, Equatable {
 }
 ```
 
-`appNotInstalled` is the case to handle explicitly — it's the expected outcome whenever the user doesn't have RoamSwitch. The rest are edge cases (corrupt install, unexpected server behavior) worth logging but rarely worth distinct UI.
+`toolError` is also what an older RoamSwitch returns for a method it doesn't have yet ("Unknown tool: …") — check the version table above. `appNotInstalled` is the case to handle explicitly — it's the expected outcome whenever the user doesn't have RoamSwitch. The rest are edge cases (corrupt install, unexpected server behavior) worth logging but rarely worth distinct UI.
 
 ## Correct usage pattern
 

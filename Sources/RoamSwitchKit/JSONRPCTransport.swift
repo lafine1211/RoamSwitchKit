@@ -24,7 +24,23 @@ struct JSONRPCTransport: Sendable {
     private static let initializeID = 1
     private static let toolCallID = 2
 
+    /// `tools/call` — additionally maps a tool result with `isError: true`
+    /// to `.toolError`.
     func callTool(name: String, arguments: [String: Any]) throws -> [String: Any] {
+        let result = try request(method: "tools/call", params: [
+            "name": name,
+            "arguments": arguments,
+        ])
+        if let isError = result["isError"] as? Bool, isError {
+            throw RoamSwitchClientError.toolError(message: extractText(from: result) ?? "unknown tool error")
+        }
+        return result
+    }
+
+    /// Any single JSON-RPC request after the MCP handshake (e.g.
+    /// `resources/list`, `resources/read`). Returns the raw `result` object;
+    /// a JSON-RPC `error` object throws `.toolError`.
+    func request(method: String, params: [String: Any]) throws -> [String: Any] {
         let process = Process()
         process.executableURL = executableURL
 
@@ -82,10 +98,7 @@ struct JSONRPCTransport: Sendable {
 
             try writeLine(["jsonrpc": "2.0", "method": "notifications/initialized"], to: stdin)
 
-            try writeLine(["jsonrpc": "2.0", "id": Self.toolCallID, "method": "tools/call", "params": [
-                "name": name,
-                "arguments": arguments,
-            ]], to: stdin)
+            try writeLine(["jsonrpc": "2.0", "id": Self.toolCallID, "method": method, "params": params], to: stdin)
 
             // Everything we're going to say has been said — closing our end of
             // stdin lets the server's `while let line = readLine()` loop reach
@@ -113,10 +126,6 @@ struct JSONRPCTransport: Sendable {
             throw RoamSwitchClientError.invalidResponse(raw: String(data: responseData, encoding: .utf8) ?? "<undecodable>")
         }
 
-        if let isError = result["isError"] as? Bool, isError {
-            throw RoamSwitchClientError.toolError(message: extractText(from: result) ?? "unknown tool error")
-        }
-
         return result
     }
 
@@ -128,6 +137,19 @@ struct JSONRPCTransport: Sendable {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
             throw RoamSwitchClientError.invalidResponse(raw: text)
+        }
+    }
+
+    /// Decodes a raw JSON-RPC `result` object (not a tool's text content) —
+    /// used for `resources/list` / `resources/read`.
+    static func decodeResult<T: Decodable>(_ type: T.Type, from result: [String: Any]) throws -> T {
+        guard let data = try? JSONSerialization.data(withJSONObject: result) else {
+            throw RoamSwitchClientError.invalidResponse(raw: "\(result)")
+        }
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw RoamSwitchClientError.invalidResponse(raw: String(data: data, encoding: .utf8) ?? "\(result)")
         }
     }
 

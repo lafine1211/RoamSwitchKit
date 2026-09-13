@@ -165,7 +165,101 @@ public actor RoamSwitchClient {
         try await call("get_notification_history", arguments: [:], as: NotificationHistoryWrapper.self).notifications
     }
 
+    /// Scans a text snippet for exposed API keys (OpenAI, Anthropic, GitHub,
+    /// AWS, HuggingFace, Google AI/Gemini, Slack, Stripe) and SSH/RSA private
+    /// keys. Matches are masked before they leave RoamSwitch. Sends no
+    /// network requests. Requires RoamSwitch 1.8.9+.
+    public func auditSecrets(text: String) async throws -> SecretAuditResult {
+        try await call("audit_secrets", arguments: ["text": text], as: SecretAuditResult.self)
+    }
+
+    /// Same as `auditSecrets(text:)`, for a file or (recursively) a
+    /// directory at an absolute path. A missing path throws `.toolError`.
+    /// Requires RoamSwitch 1.8.9+.
+    public func auditSecrets(path: String) async throws -> SecretAuditResult {
+        try await call("audit_secrets", arguments: ["path": path], as: SecretAuditResult.self)
+    }
+
+    /// The malware quarantine vault's contents (files are moved there by
+    /// the Web/Mail download guard and ClamAV scans, never deleted). Reads
+    /// only local state. Requires RoamSwitch 1.8.9+.
+    public func quarantineStatus() async throws -> QuarantineStatus {
+        try await call("get_quarantine_status", arguments: [:], as: QuarantineStatus.self)
+    }
+
+    /// Searches RoamSwitch's bundled knowledge base (features, alert
+    /// messages, settings, troubleshooting). `query` may be in any language
+    /// or be an alert-text substring; `topic` uses language-independent
+    /// identifiers. Results come back in RoamSwitch's current UI language.
+    /// Requires RoamSwitch 1.4.4+.
+    public func appHelp(query: String? = nil, topic: AppHelpTopic? = nil) async throws -> AppHelpResult {
+        var arguments: [String: Any] = [:]
+        if let query { arguments["query"] = query }
+        if let topic { arguments["topic"] = topic.rawValue }
+        return try await call("get_app_help", arguments: arguments, as: AppHelpResult.self)
+    }
+
+    /// Unified, chronological containment timeline across ARP spoofing
+    /// auto-containment, the Ransomware Canary Guard, Runtime Threat
+    /// Containment and the Port Anomaly Guard (ARP containment is recorded
+    /// only here). Reads only local state, so it also works during a network
+    /// Air-Gap. Requires RoamSwitch 1.9.25+.
+    ///
+    /// - Parameter limit: Maximum events, newest first (1–200). Defaults to 50.
+    public func incidentTimeline(limit: Int = 50) async throws -> IncidentTimeline {
+        try await call("get_incident_timeline", arguments: ["limit": limit], as: IncidentTimeline.self)
+    }
+
+    /// Remembered Wi-Fi networks (SSID, gateway-device count, last seen —
+    /// never MAC addresses) plus look-alike SSID pairs that never shared a
+    /// gateway (Evil-Twin candidates). Reads only local state. Requires
+    /// RoamSwitch 1.9.25+.
+    ///
+    /// - Parameter limit: Maximum networks, most recent first (1–200).
+    ///   Defaults to 50. `lookalikePairs` is always complete.
+    public func networkHistory(limit: Int = 50) async throws -> NetworkHistory {
+        try await call("get_network_history", arguments: ["limit": limit], as: NetworkHistory.self)
+    }
+
+    /// Lists the bundled `roamswitch://docs/...` Markdown documents (MCP
+    /// `resources/list`). Requires RoamSwitch 1.4.4+.
+    public func docResources() async throws -> [DocResource] {
+        try await request("resources/list", params: [:], as: DocResourceList.self).resources
+    }
+
+    /// Reads one bundled document by URI (MCP `resources/read`), e.g.
+    /// `roamswitch://docs/features`. An unknown URI throws `.toolError`.
+    /// Requires RoamSwitch 1.4.4+.
+    public func readDocResource(uri: String) async throws -> DocResourceContent {
+        let result = try await request("resources/read", params: ["uri": uri], as: DocResourceReadResult.self)
+        guard let first = result.contents.first else {
+            throw RoamSwitchClientError.invalidResponse(raw: "resources/read returned no contents for \(uri)")
+        }
+        return first
+    }
+
     // MARK: - Private
+
+    private func request<T: Decodable & Sendable>(
+        _ method: String,
+        params: [String: Any],
+        as type: T.Type
+    ) async throws -> T {
+        let executableURL = self.executableURL
+        let timeout = self.timeout
+        let queue = self.transportQueue
+        return try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    let transport = JSONRPCTransport(executableURL: executableURL, timeout: timeout)
+                    let result = try transport.request(method: method, params: params)
+                    continuation.resume(returning: try JSONRPCTransport.decodeResult(T.self, from: result))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
 
     private func call<T: Decodable & Sendable>(
         _ name: String,
