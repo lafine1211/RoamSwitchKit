@@ -67,6 +67,7 @@ public actor RoamSwitchClient {
 | `notificationHistory` | 1.9.8+ |
 | `incidentTimeline`, `networkHistory` | 1.9.25+ |
 | Optional `GuardStatus`/`GuardEntry` fields added in 1.9.25, `LinkRiskFactor.kind` | 1.9.25+ (`nil` on older apps — never force-unwrap) |
+| `ActiveVulnScanResult.confirmedSafe`/`.inconclusive` (`ScanCheckOutcome`) | 1.9.28+ (`nil` on older apps — never force-unwrap) |
 
 `timeout` is a per-call wall-clock ceiling (default 30s). If RoamSwitchMCPServer
 doesn't answer in time it is terminated and the call throws
@@ -227,6 +228,8 @@ public struct ActiveVulnScanResult: Codable, Equatable, Sendable {
     public let enabled: Bool               // false unless the user opted in in Settings — findings is empty either way then
     public let scannedTargetCount: Int
     public let findings: [ActiveVulnScanFinding]
+    public let confirmedSafe: [ScanCheckOutcome]?    // nil before 1.9.28 — checks that ran and found nothing
+    public let inconclusive: [ScanCheckOutcome]?     // nil before 1.9.28 — checks that couldn't complete; never evidence of safety
     public let message: String
 }
 
@@ -236,6 +239,16 @@ public struct ActiveVulnScanFinding: Codable, Equatable, Sendable {
     public let title: String
     public let description: String
     public let recommendation: String
+}
+
+// Added in 1.9.28. An empty `findings` array alone can't tell "every target
+// was checked and is safe" apart from "some checks never completed" — check
+// `inconclusive` before treating a scan as clean. See
+// https://dev.to/raknaos/my-wait-for-it-wrapper-reported-success-for-a-port-that-never-opened-ga3
+public struct ScanCheckOutcome: Codable, Equatable, Sendable {
+    public let port: Int
+    public let processName: String
+    public let check: String   // same title a finding for this exact probe would carry
 }
 
 public struct PackageCveScanResult: Codable, Equatable, Sendable {

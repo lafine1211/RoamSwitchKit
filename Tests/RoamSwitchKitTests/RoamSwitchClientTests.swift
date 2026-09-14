@@ -245,6 +245,30 @@ final class RoamSwitchClientTests: XCTestCase {
         ["content": [["type": "text", "text": json]]]
     }
 
+    /// A pre-1.9.28 server sends no `confirmedSafe`/`inconclusive` fields at
+    /// all — that must still decode, with both nil (never `[]`, so a caller
+    /// can tell "server doesn't report this yet" apart from "reported zero").
+    func testActiveVulnScanDecodesLegacyShapeWithoutInconclusiveFields() throws {
+        let legacy = #"{"enabled":true,"scannedTargetCount":2,"findings":[],"message":"Scan complete."}"#
+        let result = try JSONRPCTransport.decodeContent(ActiveVulnScanResult.self, from: toolResult(legacy))
+        XCTAssertTrue(result.findings.isEmpty)
+        XCTAssertNil(result.confirmedSafe)
+        XCTAssertNil(result.inconclusive)
+    }
+
+    /// 1.9.28+: an empty `findings` array alone can't tell "everything
+    /// checked out clean" apart from "some checks never completed" — the
+    /// two must decode into separate, non-nil lists.
+    func testActiveVulnScanDecodesConfirmedSafeAndInconclusiveSeparately() throws {
+        let json = #"{"enabled":true,"scannedTargetCount":2,"findings":[],"confirmedSafe":[{"port":6379,"processName":"redis-server","check":"Redis データベース露出リスク（非標準ポート）"}],"inconclusive":[{"port":27017,"processName":"mongod","check":"MongoDB データベース露出リスク（非標準ポート）"}],"message":"Scan complete (1 check(s) could not be completed)."}"#
+        let result = try JSONRPCTransport.decodeContent(ActiveVulnScanResult.self, from: toolResult(json))
+        XCTAssertTrue(result.findings.isEmpty)
+        XCTAssertEqual(result.confirmedSafe?.count, 1)
+        XCTAssertEqual(result.confirmedSafe?.first?.port, 6379)
+        XCTAssertEqual(result.inconclusive?.count, 1)
+        XCTAssertEqual(result.inconclusive?.first?.processName, "mongod")
+    }
+
     /// A pre-1.9.25 server sends only the original five GuardStatus fields
     /// and no `usingDefault` — that must still decode, with the new fields nil.
     func testGuardStatusDecodesLegacyShape() throws {

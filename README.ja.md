@@ -326,6 +326,7 @@ public actor RoamSwitchClient {
 | `notificationHistory()` | 1.9.8 以降 |
 | `incidentTimeline(limit:)`、`networkHistory(limit:)` | 1.9.25 以降 |
 | `GuardStatus` の拡張フィールド（`usingDefault`、`linkGuardMode`、`vpnBackend` など）と `LinkRiskFactor.kind` | 1.9.25 以降（それより前のアプリでは `nil`） |
+| `ActiveVulnScanResult.confirmedSafe` / `.inconclusive`（`ScanCheckOutcome`） | 1.9.28 以降（それより前のアプリでは `nil`） |
 
 ### `SecurityReport`
 
@@ -410,9 +411,13 @@ public actor RoamSwitchClient {
 | `enabled` | `Bool` | ユーザーが設定でこの機能をオプトインしているか |
 | `scannedTargetCount` | `Int` | プローブしたポート数 |
 | `findings` | `[ActiveVulnScanFinding]` | 非破壊で確認できた検出結果。`enabled` が `false` なら空 |
+| `confirmedSafe` | `[ScanCheckOutcome]?` | 確認が完了し、問題が見つからなかったチェック。1.9.28 より前は `nil` |
+| `inconclusive` | `[ScanCheckOutcome]?` | 接続できず・タイムアウト等で確認自体ができなかったチェック（安全の確認ではない）。1.9.28 より前は `nil` |
 | `message` | `String` | 人間向けの要約（ローカライズ済み） |
 
 `ActiveVulnScanFinding`: `port: Int`、`processName`、`title`、`description`、`recommendation`。
+
+`ScanCheckOutcome`（1.9.28 以降）: `port: Int`、`processName`、`check: String`（そのチェックの finding と同じタイトル）。`findings` が空というだけでは「全対象を確認して安全だった」のか「一部は確認自体できなかった」のかを区別できないため、安全と判断する前に必ず `inconclusive` を確認してください。
 
 ### `PackageCveScanResult`
 

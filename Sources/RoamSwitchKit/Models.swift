@@ -131,10 +131,31 @@ public struct ActiveVulnScanFinding: Codable, Equatable, Sendable {
     public let recommendation: String
 }
 
+/// One probe that did NOT produce a finding — either the target was
+/// actually confirmed safe, or the probe itself couldn't complete
+/// (connection refused, timeout). Kept separate from `findings` so a
+/// caller can't mistake "checked, and it's fine" for "never actually got
+/// to check" — both used to collapse into the same empty findings list
+/// (see the 2026-09 discussion of `wait-for-it.sh` reporting success for a
+/// port that never opened —
+/// https://dev.to/raknaos/my-wait-for-it-wrapper-reported-success-for-a-port-that-never-opened-ga3).
+public struct ScanCheckOutcome: Codable, Equatable, Sendable {
+    public let port: Int
+    public let processName: String
+    public let check: String
+}
+
 public struct ActiveVulnScanResult: Codable, Equatable, Sendable {
     public let enabled: Bool
     public let scannedTargetCount: Int
     public let findings: [ActiveVulnScanFinding]
+    /// Checks that ran to completion and found no issue. `nil` when talking
+    /// to an app version that predates this field.
+    public let confirmedSafe: [ScanCheckOutcome]?
+    /// Checks that could not complete (unreachable/timeout) — never
+    /// evidence of safety. `nil` when talking to an app version that
+    /// predates this field.
+    public let inconclusive: [ScanCheckOutcome]?
     public let message: String
 }
 

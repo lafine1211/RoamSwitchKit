@@ -247,6 +247,7 @@ public actor RoamSwitchClient {
 | `notificationHistory()` | 1.9.8+ |
 | `incidentTimeline(limit:)`, `networkHistory(limit:)` | 1.9.25+ |
 | Extended `GuardStatus` fields (`usingDefault`, `linkGuardMode`, `vpnBackend`, …) and `LinkRiskFactor.kind` | 1.9.25+ (older apps leave them `nil`) |
+| `ActiveVulnScanResult.confirmedSafe` / `.inconclusive` (`ScanCheckOutcome`) | 1.9.28+ (older apps leave them `nil`) |
 
 ### `SecurityReport`
 
@@ -331,9 +332,13 @@ public actor RoamSwitchClient {
 | `enabled` | `Bool` | Whether the user has opted in to this feature in Settings |
 | `scannedTargetCount` | `Int` | Number of listening ports probed |
 | `findings` | `[ActiveVulnScanFinding]` | Confirmed, non-destructive findings — empty when `enabled` is `false` |
+| `confirmedSafe` | `[ScanCheckOutcome]?` | Checks that ran to completion and found no issue. `nil` before 1.9.28 |
+| `inconclusive` | `[ScanCheckOutcome]?` | Checks that could not complete (unreachable/timeout) — never evidence of safety. `nil` before 1.9.28 |
 | `message` | `String` | Human-readable summary |
 
 `ActiveVulnScanFinding`: `port: Int`, `processName`, `title`, `description`, `recommendation`.
+
+`ScanCheckOutcome` (1.9.28+): `port: Int`, `processName`, `check: String` (the same title a finding for this exact probe would carry). An empty `findings` array alone can't tell "every target was checked and is safe" apart from "some checks never completed" — check `inconclusive` before treating a scan as clean.
 
 ### `PackageCveScanResult`
 
