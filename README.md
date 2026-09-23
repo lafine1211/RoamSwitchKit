@@ -248,6 +248,7 @@ public actor RoamSwitchClient {
 | `incidentTimeline(limit:)`, `networkHistory(limit:)` | 1.9.25+ |
 | Extended `GuardStatus` fields (`usingDefault`, `linkGuardMode`, `vpnBackend`, …) and `LinkRiskFactor.kind` | 1.9.25+ (older apps leave them `nil`) |
 | `ActiveVulnScanResult.confirmedSafe` / `.inconclusive` (`ScanCheckOutcome`) | 1.9.28+ (older apps leave them `nil`) |
+| `SecurityAuditItem.checkId` / `.cisControl` / `.nistCsf` | 1.10.0+ (older apps leave them `nil`) |
 
 ### `SecurityReport`
 
@@ -260,7 +261,7 @@ public actor RoamSwitchClient {
 | `items` | `[SecurityAuditItem]` | One entry per check |
 | `caveats` | `[String]` | Notes on anything this tool couldn't fully verify (e.g. Wi-Fi SSID unreadable without Location Services permission, which a bare CLI process can't hold) |
 
-`SecurityAuditItem`: `category`, `title`, `isPassed: Bool`, `statusText`, `detail`, `recommendation`, `settingsURL: String?`, `isApplicable: Bool`.
+`SecurityAuditItem`: `category`, `title`, `isPassed: Bool`, `statusText`, `detail`, `recommendation`, `settingsURL: String?`, `isApplicable: Bool`, `checkId: String?` (stable machine identifier, e.g. `"luks_encryption"`; `nil` before 1.10.0), `cisControl: String?` (a CIS Controls v8 safeguard number when confidently mappable; `nil` also just means "no confident mapping"), `nistCsf: [String]?` (NIST CSF 2.0 subcategory codes, e.g. `["PR.DS-01"]`; same "confident or omit" policy).
 
 ### `ExposedPorts`
 

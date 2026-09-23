@@ -327,6 +327,7 @@ public actor RoamSwitchClient {
 | `incidentTimeline(limit:)`、`networkHistory(limit:)` | 1.9.25 以降 |
 | `GuardStatus` の拡張フィールド（`usingDefault`、`linkGuardMode`、`vpnBackend` など）と `LinkRiskFactor.kind` | 1.9.25 以降（それより前のアプリでは `nil`） |
 | `ActiveVulnScanResult.confirmedSafe` / `.inconclusive`（`ScanCheckOutcome`） | 1.9.28 以降（それより前のアプリでは `nil`） |
+| `SecurityAuditItem.checkId` / `.cisControl` / `.nistCsf` | 1.10.0 以降（それより前のアプリでは `nil`） |
 
 ### `SecurityReport`
 
@@ -339,7 +340,7 @@ public actor RoamSwitchClient {
 | `items` | `[SecurityAuditItem]` | 項目ごとの結果 |
 | `caveats` | `[String]` | このツールで完全には確認できなかった点の注記（例: 位置情報の権限を持てない単体 CLI プロセスでは Wi-Fi の SSID を読めない） |
 
-`SecurityAuditItem`: `category`、`title`、`isPassed: Bool`、`statusText`、`detail`、`recommendation`、`settingsURL: String?`、`isApplicable: Bool`。
+`SecurityAuditItem`: `category`、`title`、`isPassed: Bool`、`statusText`、`detail`、`recommendation`、`settingsURL: String?`、`isApplicable: Bool`、`checkId: String?`（安定した機械可読識別子。例: `"luks_encryption"`。1.10.0 より前は `nil`）、`cisControl: String?`（確信を持ってマッピングできる場合の CIS Controls v8 セーフガード番号。`nil` は「マッピング無し」または旧バージョンのいずれか）、`nistCsf: [String]?`（NIST CSF 2.0 サブカテゴリコード。例: `["PR.DS-01"]`。同じ「確信があるものだけ・不明なら省略」方針）。
 
 ### `ExposedPorts`
 

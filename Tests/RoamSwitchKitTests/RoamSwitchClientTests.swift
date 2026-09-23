@@ -293,6 +293,24 @@ final class RoamSwitchClientTests: XCTestCase {
         XCTAssertEqual(status.usbStorageAllowedVolumeCount, 2)
     }
 
+    /// A pre-1.10.0 server sends no `checkId`/`cisControl`/`nistCsf` on
+    /// audit items at all — that must still decode, with all three nil.
+    func testSecurityReportItemDecodesLegacyShapeWithoutComplianceFields() throws {
+        let legacy = #"{"score":90,"grade":"A","totalChecks":1,"passedChecks":1,"items":[{"category":"c","title":"t","isPassed":true,"statusText":"ok","detail":"d","recommendation":"r","settingsURL":null,"isApplicable":true}],"caveats":[],"timestamp":"2026-09-23T00:00:00Z"}"#
+        let report = try JSONRPCTransport.decodeContent(SecurityReport.self, from: toolResult(legacy))
+        XCTAssertNil(report.items.first?.checkId)
+        XCTAssertNil(report.items.first?.cisControl)
+        XCTAssertNil(report.items.first?.nistCsf)
+    }
+
+    func testSecurityReportItemDecodesComplianceFields() throws {
+        let json = #"{"score":90,"grade":"A","totalChecks":1,"passedChecks":1,"items":[{"category":"c","title":"t","isPassed":true,"statusText":"ok","detail":"d","recommendation":"r","settingsURL":null,"isApplicable":true,"checkId":"luks_encryption","cisControl":"3.11","nistCsf":["PR.DS-01"]}],"caveats":[],"timestamp":"2026-09-23T00:00:00Z"}"#
+        let report = try JSONRPCTransport.decodeContent(SecurityReport.self, from: toolResult(json))
+        XCTAssertEqual(report.items.first?.checkId, "luks_encryption")
+        XCTAssertEqual(report.items.first?.cisControl, "3.11")
+        XCTAssertEqual(report.items.first?.nistCsf, ["PR.DS-01"])
+    }
+
     func testLinkRiskFactorKindIsOptional() throws {
         let legacy = #"{"originalURL":"a","finalURL":"a","redirectChain":[],"domain":"a","score":10,"riskLevel":"dangerous","isHTTPS":true,"riskFactors":[{"title":"t","detail":"d","isSevere":true}]}"#
         XCTAssertNil(try JSONRPCTransport.decodeContent(LinkAuditReport.self, from: toolResult(legacy)).riskFactors.first?.kind)

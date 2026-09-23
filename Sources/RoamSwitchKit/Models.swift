@@ -16,6 +16,16 @@ public struct SecurityAuditItem: Codable, Equatable, Sendable {
     public let recommendation: String
     public let settingsURL: String?
     public let isApplicable: Bool
+    /// Stable machine identifier for this check (e.g. `"luks_encryption"`).
+    /// `nil` when talking to an app version that predates this field.
+    public let checkId: String?
+    /// A CIS Controls v8 safeguard number (e.g. `"3.11"`), when confidently
+    /// mappable. `nil` means either no confident mapping, or an app version
+    /// that predates this field — the two aren't distinguishable.
+    public let cisControl: String?
+    /// NIST CSF 2.0 subcategory codes (e.g. `["PR.DS-01"]`). `nil` when
+    /// talking to an app version that predates this field.
+    public let nistCsf: [String]?
 }
 
 public struct SecurityReport: Codable, Equatable, Sendable {

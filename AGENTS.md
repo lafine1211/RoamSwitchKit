@@ -68,6 +68,7 @@ public actor RoamSwitchClient {
 | `incidentTimeline`, `networkHistory` | 1.9.25+ |
 | Optional `GuardStatus`/`GuardEntry` fields added in 1.9.25, `LinkRiskFactor.kind` | 1.9.25+ (`nil` on older apps — never force-unwrap) |
 | `ActiveVulnScanResult.confirmedSafe`/`.inconclusive` (`ScanCheckOutcome`) | 1.9.28+ (`nil` on older apps — never force-unwrap) |
+| `SecurityAuditItem.checkId`/`.cisControl`/`.nistCsf` | 1.10.0+ (`nil` on older apps — never force-unwrap) |
 
 `timeout` is a per-call wall-clock ceiling (default 30s). If RoamSwitchMCPServer
 doesn't answer in time it is terminated and the call throws
@@ -102,6 +103,9 @@ public struct SecurityAuditItem: Codable, Equatable, Sendable {
     public let recommendation: String
     public let settingsURL: String?
     public let isApplicable: Bool
+    public let checkId: String?         // e.g. "luks_encryption"; nil before 1.10.0
+    public let cisControl: String?      // CIS Controls v8 safeguard number when confident; nil = no mapping or older app
+    public let nistCsf: [String]?       // NIST CSF 2.0 subcategory codes, e.g. ["PR.DS-01"]; nil before 1.10.0
 }
 ```
 
