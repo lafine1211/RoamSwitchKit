@@ -9,8 +9,9 @@ import XCTest
 /// skip rather than fail.
 final class RoamSwitchClientTests: XCTestCase {
     private func makeClientOrSkip() throws -> RoamSwitchClient {
-        let debugDerivedBinary = "/Users/tetsuharu/Library/Developer/Xcode/DerivedData/RoamSwitch-bzvrkxawectksnaiivrtzlqulvok/Build/Products/Debug/RoamSwitchMCPServer"
-        if FileManager.default.isExecutableFile(atPath: debugDerivedBinary) {
+        // Xcodeのデバッグビルドを使いたい場合は、環境変数でバイナリのパスを指定する。
+        let debugDerivedBinary = ProcessInfo.processInfo.environment["ROAMSWITCH_MCP_SERVER_BINARY"] ?? ""
+        if !debugDerivedBinary.isEmpty, FileManager.default.isExecutableFile(atPath: debugDerivedBinary) {
             return try RoamSwitchClient(executableURL: URL(fileURLWithPath: debugDerivedBinary))
         }
         do {
