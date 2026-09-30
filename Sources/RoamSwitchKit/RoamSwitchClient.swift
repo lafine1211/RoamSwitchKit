@@ -23,35 +23,111 @@ public actor RoamSwitchClient {
     /// stall (or deadlock) unrelated `async` work in the host app.
     private let transportQueue = DispatchQueue(label: "net.lafine.roamswitchkit.transport", qos: .userInitiated)
 
-    /// - Parameters:
-    ///   - appBundleID: RoamSwitch's bundle identifier. Only override this for
-    ///     testing against a differently-identified build.
-    ///   - timeout: Wall-clock ceiling for a single call. If the server hasn't
-    ///     responded by then it is terminated and the call throws
-    ///     `RoamSwitchClientError.timedOut`. Defaults to 30 seconds.
-    /// - Throws: `RoamSwitchClientError.appNotInstalled` if no app with this
-    ///   bundle ID is registered with Launch Services, or
-    ///   `.serverBinaryNotFound` if the app is installed but predates 1.3.0.
-    public init(appBundleID: String = "com.tetsuharu.RoamSwitch", timeout: TimeInterval = 30) throws {
-        self.timeout = timeout
-        if let envPath = ProcessInfo.processInfo.environment["ROAMSWITCH_SERVER_PATH"],
-           FileManager.default.isExecutableFile(atPath: envPath) {
-            self.executableURL = URL(fileURLWithPath: envPath)
-            return
+    /// Tools that run active scans / heavy parsing get a longer ceiling than
+    /// the caller's baseline `timeout`; cheap local-state reads get a shorter
+    /// one so a wedged server fails fast.
+    private enum TimeoutClass {
+        case light, normal, heavy
+        func effective(_ base: TimeInterval) -> TimeInterval {
+            switch self {
+            case .light: return min(base, 15)
+            case .normal: return base
+            case .heavy: return max(base, 120)
+            }
         }
-        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID) else {
-            throw RoamSwitchClientError.appNotInstalled
-        }
-        let binaryURL = appURL.appendingPathComponent("Contents/MacOS/RoamSwitchMCPServer")
-        guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else {
-            throw RoamSwitchClientError.serverBinaryNotFound
-        }
-        self.executableURL = binaryURL
     }
 
-    public init(executableURL: URL, timeout: TimeInterval = 30) throws {
+    /// Server-side limits (kept in sync with RoamSwitchMCPServer).
+    private static let maxLogHours = 168
+    private static let maxListLimit = 200
+
+    /// - Parameters:
+    ///   - appBundleID: RoamSwitch's bundle identifier. Only override this for
+    ///     testing against a differently-identified build. The resolved app
+    ///     and its helper must still be signed by the RoamSwitch Team ID.
+    ///   - timeout: Baseline wall-clock ceiling for a single call (heavy scans
+    ///     use at least 120 s, light local reads at most 15 s). On expiry the
+    ///     server and its child processes are killed and the call throws
+    ///     `RoamSwitchClientError.timedOut`. Defaults to 30 seconds.
+    ///   - allowEnvironmentOverride: Opt in to honoring the
+    ///     `ROAMSWITCH_SERVER_PATH` environment variable. Always honored in
+    ///     DEBUG builds; ignored otherwise unless this is `true`. The override
+    ///     binary is signature-verified except in DEBUG builds.
+    /// - Throws: `RoamSwitchClientError.appNotInstalled` if no app with this
+    ///   bundle ID is registered with Launch Services,
+    ///   `.serverBinaryNotFound` if the app is installed but predates 1.3.0,
+    ///   or `.untrustedExecutable` if no candidate passes signature checks.
+    public init(appBundleID: String = "com.tetsuharu.RoamSwitch",
+                timeout: TimeInterval = 30,
+                allowEnvironmentOverride: Bool = false) throws {
+        self.timeout = timeout
+
+        #if DEBUG
+        let envOverrideAllowed = true
+        let skipVerification = true
+        #else
+        let envOverrideAllowed = allowEnvironmentOverride
+        let skipVerification = false
+        #endif
+        if envOverrideAllowed,
+           let envPath = ProcessInfo.processInfo.environment["ROAMSWITCH_SERVER_PATH"],
+           FileManager.default.isExecutableFile(atPath: envPath) {
+            let url = URL(fileURLWithPath: envPath)
+            if !skipVerification, !CodeSignatureVerifier.isSignedByRoamSwitch(at: url) {
+                throw RoamSwitchClientError.untrustedExecutable
+            }
+            self.executableURL = url
+            return
+        }
+
+        // Several apps can claim the same bundle ID (copies, look-alikes);
+        // take the first one whose signature actually verifies.
+        let candidates = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: appBundleID)
+        guard !candidates.isEmpty else {
+            throw RoamSwitchClientError.appNotInstalled
+        }
+        var sawUnsigned = false
+        var sawMissingBinary = false
+        var chosen: URL?
+        for appURL in candidates {
+            let binaryURL = appURL.appendingPathComponent("Contents/MacOS/RoamSwitchMCPServer")
+            guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else {
+                sawMissingBinary = true
+                continue
+            }
+            // The helper must really live inside the app bundle (no symlink escape).
+            let appPath = appURL.resolvingSymlinksInPath().path
+            guard binaryURL.resolvingSymlinksInPath().path.hasPrefix(appPath + "/") else {
+                sawUnsigned = true
+                continue
+            }
+            let appOK = CodeSignatureVerifier.isSignedByRoamSwitch(at: appURL, extraRequirement: "identifier \"\(appBundleID)\"")
+            let helperOK = CodeSignatureVerifier.isSignedByRoamSwitch(at: binaryURL)
+            if appOK && helperOK {
+                chosen = binaryURL
+                break
+            }
+            sawUnsigned = true
+        }
+        guard let chosen else {
+            throw sawUnsigned ? RoamSwitchClientError.untrustedExecutable
+                              : (sawMissingBinary ? RoamSwitchClientError.serverBinaryNotFound : RoamSwitchClientError.appNotInstalled)
+        }
+        self.executableURL = chosen
+    }
+
+    /// Launches an explicit server binary.
+    ///
+    /// - Parameter verifySignature: When `true` (default) the binary must be
+    ///   signed by the RoamSwitch Team ID, otherwise
+    ///   `RoamSwitchClientError.untrustedExecutable` is thrown. Pass `false`
+    ///   only for tests / local development builds.
+    public init(executableURL: URL, timeout: TimeInterval = 30, verifySignature: Bool = true) throws {
         guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
             throw RoamSwitchClientError.serverBinaryNotFound
+        }
+        if verifySignature, !CodeSignatureVerifier.isSignedByRoamSwitch(at: executableURL) {
+            throw RoamSwitchClientError.untrustedExecutable
         }
         self.executableURL = executableURL
         self.timeout = timeout
@@ -98,7 +174,10 @@ public actor RoamSwitchClient {
     ///
     /// - Parameter hours: How far back to look, in hours. Defaults to 24.
     public func auditSecurityLogs(hours: Int = 24) async throws -> SecurityLogAudit {
-        try await call("audit_security_logs", arguments: ["hours": hours], as: SecurityLogAudit.self)
+        guard (1...Self.maxLogHours).contains(hours) else {
+            throw RoamSwitchClientError.invalidArgument("hours must be in 1...\(Self.maxLogHours)")
+        }
+        return try await call("audit_security_logs", arguments: ["hours": hours], as: SecurityLogAudit.self)
     }
 
     /// Runs real, non-destructive network probes against this Mac's own
@@ -207,7 +286,10 @@ public actor RoamSwitchClient {
     ///
     /// - Parameter limit: Maximum events, newest first (1–200). Defaults to 50.
     public func incidentTimeline(limit: Int = 50) async throws -> IncidentTimeline {
-        try await call("get_incident_timeline", arguments: ["limit": limit], as: IncidentTimeline.self)
+        guard (1...Self.maxListLimit).contains(limit) else {
+            throw RoamSwitchClientError.invalidArgument("limit must be in 1...\(Self.maxListLimit)")
+        }
+        return try await call("get_incident_timeline", arguments: ["limit": limit], as: IncidentTimeline.self)
     }
 
     /// Remembered Wi-Fi networks (SSID, gateway-device count, last seen —
@@ -218,7 +300,10 @@ public actor RoamSwitchClient {
     /// - Parameter limit: Maximum networks, most recent first (1–200).
     ///   Defaults to 50. `lookalikePairs` is always complete.
     public func networkHistory(limit: Int = 50) async throws -> NetworkHistory {
-        try await call("get_network_history", arguments: ["limit": limit], as: NetworkHistory.self)
+        guard (1...Self.maxListLimit).contains(limit) else {
+            throw RoamSwitchClientError.invalidArgument("limit must be in 1...\(Self.maxListLimit)")
+        }
+        return try await call("get_network_history", arguments: ["limit": limit], as: NetworkHistory.self)
     }
 
     /// Lists the bundled `roamswitch://docs/...` Markdown documents (MCP
@@ -240,13 +325,25 @@ public actor RoamSwitchClient {
 
     // MARK: - Private
 
+    private static func timeoutClass(forTool name: String) -> TimeoutClass {
+        switch name {
+        case "get_security_report", "run_active_vuln_scan", "run_package_cve_scan",
+             "run_package_cve_scan_languages", "audit_security_logs", "audit_secrets":
+            return .heavy
+        case "get_exposed_ports":
+            return .normal
+        default:
+            return .light
+        }
+    }
+
     private func request<T: Decodable & Sendable>(
         _ method: String,
         params: [String: Any],
         as type: T.Type
     ) async throws -> T {
         let executableURL = self.executableURL
-        let timeout = self.timeout
+        let timeout = TimeoutClass.light.effective(self.timeout)
         let queue = self.transportQueue
         return try await withCheckedThrowingContinuation { continuation in
             queue.async {
@@ -267,7 +364,7 @@ public actor RoamSwitchClient {
         as type: T.Type
     ) async throws -> T {
         let executableURL = self.executableURL
-        let timeout = self.timeout
+        let timeout = Self.timeoutClass(forTool: name).effective(self.timeout)
         let queue = self.transportQueue
         return try await withCheckedThrowingContinuation { continuation in
             queue.async {

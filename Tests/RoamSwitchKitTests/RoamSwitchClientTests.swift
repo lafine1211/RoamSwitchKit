@@ -12,7 +12,7 @@ final class RoamSwitchClientTests: XCTestCase {
         // Xcodeのデバッグビルドを使いたい場合は、環境変数でバイナリのパスを指定する。
         let debugDerivedBinary = ProcessInfo.processInfo.environment["ROAMSWITCH_MCP_SERVER_BINARY"] ?? ""
         if !debugDerivedBinary.isEmpty, FileManager.default.isExecutableFile(atPath: debugDerivedBinary) {
-            return try RoamSwitchClient(executableURL: URL(fileURLWithPath: debugDerivedBinary))
+            return try RoamSwitchClient(executableURL: URL(fileURLWithPath: debugDerivedBinary), verifySignature: false)
         }
         do {
             return try RoamSwitchClient()
@@ -31,7 +31,7 @@ final class RoamSwitchClientTests: XCTestCase {
     /// pipe breaks mid-handshake) must surface as a thrown error, never an
     /// uncatchable Objective-C exception that aborts the host process.
     func testImmediatelyExitingBinaryThrowsRatherThanCrashing() async throws {
-        let client = try RoamSwitchClient(executableURL: URL(fileURLWithPath: "/usr/bin/false"))
+        let client = try RoamSwitchClient(executableURL: URL(fileURLWithPath: "/usr/bin/false"), verifySignature: false)
         do {
             _ = try await client.securityReport()
             XCTFail("expected an error")
@@ -49,7 +49,7 @@ final class RoamSwitchClientTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
         defer { try? FileManager.default.removeItem(at: script) }
 
-        let client = try RoamSwitchClient(executableURL: script, timeout: 0.5)
+        let client = try RoamSwitchClient(executableURL: script, timeout: 0.5, verifySignature: false)
         let start = Date()
         do {
             _ = try await client.guardStatus()

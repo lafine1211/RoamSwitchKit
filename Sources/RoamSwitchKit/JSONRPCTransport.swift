@@ -21,6 +21,9 @@ struct JSONRPCTransport: Sendable {
         self.timeout = timeout
     }
 
+    /// Upper bound for a single newline-delimited response line (16 MiB).
+    static let maxResponseLineBytes = 16 * 1024 * 1024
+
     private static let initializeID = 1
     private static let toolCallID = 2
 
@@ -41,43 +44,54 @@ struct JSONRPCTransport: Sendable {
     /// `resources/list`, `resources/read`). Returns the raw `result` object;
     /// a JSON-RPC `error` object throws `.toolError`.
     func request(method: String, params: [String: Any]) throws -> [String: Any] {
-        let process = Process()
-        process.executableURL = executableURL
-
         let stdinPipe = Pipe()
         let stdoutPipe = Pipe()
-        process.standardInput = stdinPipe
-        process.standardOutput = stdoutPipe
-        // Genuinely discard stderr. A bare `Pipe()` here would *buffer* the
-        // server's stderr (e.g. its startup NSUserDefaults warning) with no
-        // reader draining it — once that 64 KB pipe buffer filled, the server
-        // would block on `write(2)` and this exchange would deadlock.
-        process.standardError = FileHandle.nullDevice
 
+        // Spawn in its *own process group* (posix_spawn, not Process) so that on
+        // timeout we can SIGKILL the server together with anything it spawned
+        // (nmap, npm, ...), instead of orphaning those children.
+        let pid: pid_t
         do {
-            try process.run()
+            pid = try Self.spawnInOwnProcessGroup(
+                executablePath: executableURL.path,
+                stdinFD: stdinPipe.fileHandleForReading.fileDescriptor,
+                stdoutFD: stdoutPipe.fileHandleForWriting.fileDescriptor
+            )
         } catch {
             throw RoamSwitchClientError.processLaunchFailed(underlying: error)
         }
+        // The child owns these ends now; closing ours lets EOF propagate.
+        try? stdinPipe.fileHandleForReading.close()
+        try? stdoutPipe.fileHandleForWriting.close()
 
-        // Watchdog: if the exchange overruns `timeout`, kill the subprocess.
-        // That collapses the blocking read below to EOF, and the `didTimeOut`
-        // flag lets us report it as `.timedOut` rather than `.noResponse`.
+        // Watchdog: if the exchange overruns `timeout`, kill the whole process
+        // group. That collapses the blocking read below to EOF, and the
+        // `didTimeOut` flag lets us report it as `.timedOut` rather than
+        // `.noResponse`. `reaped` guards against signalling a recycled pid.
         let stateLock = NSLock()
         var didTimeOut = false
+        var reaped = false
         let watchdog = DispatchWorkItem {
             stateLock.lock()
-            didTimeOut = true
+            if !reaped {
+                didTimeOut = true
+                kill(-pid, SIGKILL)
+            }
             stateLock.unlock()
-            process.terminate()
         }
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout, execute: watchdog)
 
         defer {
             watchdog.cancel()
-            if process.isRunning {
-                process.terminate()
+            stateLock.lock()
+            if !reaped {
+                // Response (if any) is already read: tear down the group and reap.
+                kill(-pid, SIGKILL)
+                var status: Int32 = 0
+                while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+                reaped = true
             }
+            stateLock.unlock()
         }
 
         let stdin = stdinPipe.fileHandleForWriting
@@ -115,7 +129,7 @@ struct JSONRPCTransport: Sendable {
         }
 
         guard let message = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any] else {
-            throw RoamSwitchClientError.invalidResponse(raw: String(data: responseData, encoding: .utf8) ?? "<undecodable>")
+            throw RoamSwitchClientError.invalidResponse(raw: RoamSwitchClientError.truncatedRaw(String(data: responseData, encoding: .utf8) ?? "<undecodable>"))
         }
 
         if let error = message["error"] as? [String: Any] {
@@ -123,7 +137,7 @@ struct JSONRPCTransport: Sendable {
         }
 
         guard let result = message["result"] as? [String: Any] else {
-            throw RoamSwitchClientError.invalidResponse(raw: String(data: responseData, encoding: .utf8) ?? "<undecodable>")
+            throw RoamSwitchClientError.invalidResponse(raw: RoamSwitchClientError.truncatedRaw(String(data: responseData, encoding: .utf8) ?? "<undecodable>"))
         }
 
         return result
@@ -131,12 +145,12 @@ struct JSONRPCTransport: Sendable {
 
     static func decodeContent<T: Decodable>(_ type: T.Type, from result: [String: Any]) throws -> T {
         guard let text = extractText(from: result), let data = text.data(using: .utf8) else {
-            throw RoamSwitchClientError.invalidResponse(raw: "\(result)")
+            throw RoamSwitchClientError.invalidResponse(raw: RoamSwitchClientError.truncatedRaw("\(result)"))
         }
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
-            throw RoamSwitchClientError.invalidResponse(raw: text)
+            throw RoamSwitchClientError.invalidResponse(raw: RoamSwitchClientError.truncatedRaw(text))
         }
     }
 
@@ -144,16 +158,49 @@ struct JSONRPCTransport: Sendable {
     /// used for `resources/list` / `resources/read`.
     static func decodeResult<T: Decodable>(_ type: T.Type, from result: [String: Any]) throws -> T {
         guard let data = try? JSONSerialization.data(withJSONObject: result) else {
-            throw RoamSwitchClientError.invalidResponse(raw: "\(result)")
+            throw RoamSwitchClientError.invalidResponse(raw: RoamSwitchClientError.truncatedRaw("\(result)"))
         }
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
-            throw RoamSwitchClientError.invalidResponse(raw: String(data: data, encoding: .utf8) ?? "\(result)")
+            throw RoamSwitchClientError.invalidResponse(raw: RoamSwitchClientError.truncatedRaw(String(data: data, encoding: .utf8) ?? "\(result)"))
         }
     }
 
     // MARK: - Private helpers
+
+    /// posix_spawn with: stdin/stdout wired to the given pipe ends, stderr to
+    /// /dev/null (see note in `request`), a new process group led by the child,
+    /// and every other inherited fd closed (POSIX_SPAWN_CLOEXEC_DEFAULT).
+    private static func spawnInOwnProcessGroup(executablePath: String, stdinFD: Int32, stdoutFD: Int32) throws -> pid_t {
+        var fileActions: posix_spawn_file_actions_t? = nil
+        var attr: posix_spawnattr_t? = nil
+        guard posix_spawn_file_actions_init(&fileActions) == 0 else { throw POSIXError(.ENOMEM) }
+        defer { posix_spawn_file_actions_destroy(&fileActions) }
+        guard posix_spawnattr_init(&attr) == 0 else { throw POSIXError(.ENOMEM) }
+        defer { posix_spawnattr_destroy(&attr) }
+
+        posix_spawn_file_actions_adddup2(&fileActions, stdinFD, 0)
+        posix_spawn_file_actions_adddup2(&fileActions, stdoutFD, 1)
+        posix_spawn_file_actions_addopen(&fileActions, 2, "/dev/null", O_WRONLY, 0)
+        posix_spawnattr_setpgroup(&attr, 0)
+        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
+
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(executablePath), nil]
+        var envp: [UnsafeMutablePointer<CChar>?] = ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") }
+        envp.append(nil)
+        defer {
+            for p in argv { free(p) }
+            for p in envp { free(p) }
+        }
+
+        var pid: pid_t = 0
+        let rc = posix_spawn(&pid, executablePath, &fileActions, &attr, argv, envp)
+        guard rc == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: rc) ?? .EINVAL)
+        }
+        return pid
+    }
 
     private func writeLine(_ object: [String: Any], to handle: FileHandle) throws {
         let data = try JSONSerialization.data(withJSONObject: object)
@@ -183,9 +230,15 @@ struct JSONRPCTransport: Sendable {
                 return nil // EOF before we saw our response
             }
             buffer.append(chunk)
+            if buffer.count > Self.maxResponseLineBytes && !buffer.contains(0x0A) {
+                throw RoamSwitchClientError.invalidResponse(raw: "response line exceeds \(Self.maxResponseLineBytes / (1024 * 1024)) MiB limit")
+            }
             while let newlineIndex = buffer.firstIndex(of: 0x0A) {
                 let line = buffer.subdata(in: buffer.startIndex..<newlineIndex)
                 buffer.removeSubrange(buffer.startIndex...newlineIndex)
+                if line.count > Self.maxResponseLineBytes {
+                    throw RoamSwitchClientError.invalidResponse(raw: "response line exceeds \(Self.maxResponseLineBytes / (1024 * 1024)) MiB limit")
+                }
                 if let parsed = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
                    let responseID = parsed["id"] as? Int, responseID == id {
                     return line

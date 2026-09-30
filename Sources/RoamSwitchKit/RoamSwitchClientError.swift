@@ -12,6 +12,15 @@ public enum RoamSwitchClientError: Error, LocalizedError, Sendable, Equatable {
     /// version older than 1.3.0, which shipped without it.
     case serverBinaryNotFound
 
+    /// The resolved RoamSwitch app / server binary is not signed by the
+    /// RoamSwitch developer Team ID (possible look-alike or tampered copy),
+    /// so it was not launched.
+    case untrustedExecutable
+
+    /// A caller-supplied argument was outside the range the server accepts
+    /// (checked client-side before any process is launched).
+    case invalidArgument(String)
+
     /// Launching the subprocess itself failed (e.g. Gatekeeper, permissions).
     case processLaunchFailed(underlying: Error)
 
@@ -37,6 +46,10 @@ public enum RoamSwitchClientError: Error, LocalizedError, Sendable, Equatable {
             return "RoamSwitch.app isn't installed. RoamSwitchKit reads live diagnostics from the running app and can't function without it — see https://lafine.net to install."
         case .serverBinaryNotFound:
             return "RoamSwitch.app is installed but doesn't include RoamSwitchMCPServer. Update to RoamSwitch 1.3.0 or later."
+        case .untrustedExecutable:
+            return "The RoamSwitchMCPServer binary is not signed by the RoamSwitch developer and was not launched."
+        case .invalidArgument(let message):
+            return "Invalid argument: \(message)"
         case .processLaunchFailed(let underlying):
             return "Failed to launch RoamSwitchMCPServer: \(underlying.localizedDescription)"
         case .noResponse:
@@ -44,10 +57,16 @@ public enum RoamSwitchClientError: Error, LocalizedError, Sendable, Equatable {
         case .timedOut:
             return "RoamSwitchMCPServer did not respond in time and was terminated."
         case .invalidResponse(let raw):
-            return "RoamSwitchMCPServer returned an unexpected response: \(raw)"
+            return "RoamSwitchMCPServer returned an unexpected response: \(Self.truncatedRaw(raw))"
         case .toolError(let message):
             return "RoamSwitchMCPServer reported an error: \(message)"
         }
+    }
+
+    /// Raw server output can be huge or attacker-influenced; keep only a short prefix.
+    static let rawPreviewLimit = 300
+    static func truncatedRaw(_ raw: String) -> String {
+        raw.count > rawPreviewLimit ? String(raw.prefix(rawPreviewLimit)) + "…(truncated)" : raw
     }
 
     // `Error` isn't Equatable, so `processLaunchFailed` can't be synthesized —
@@ -59,9 +78,12 @@ public enum RoamSwitchClientError: Error, LocalizedError, Sendable, Equatable {
              (.serverBinaryNotFound, .serverBinaryNotFound),
              (.noResponse, .noResponse),
              (.timedOut, .timedOut),
+             (.untrustedExecutable, .untrustedExecutable),
              (.processLaunchFailed, .processLaunchFailed):
             return true
         case let (.invalidResponse(a), .invalidResponse(b)):
+            return a == b
+        case let (.invalidArgument(a), .invalidArgument(b)):
             return a == b
         case let (.toolError(a), .toolError(b)):
             return a == b

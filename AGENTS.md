@@ -30,8 +30,8 @@ dependencies: [
 import RoamSwitchKit
 
 public actor RoamSwitchClient {
-    public init(appBundleID: String = "com.tetsuharu.RoamSwitch", timeout: TimeInterval = 30) throws
-    public init(executableURL: URL, timeout: TimeInterval = 30) throws
+    public init(appBundleID: String = "com.tetsuharu.RoamSwitch", timeout: TimeInterval = 30, allowEnvironmentOverride: Bool = false) throws
+    public init(executableURL: URL, timeout: TimeInterval = 30, verifySignature: Bool = true) throws   // binary must be signed by the RoamSwitch Team ID unless verifySignature: false (tests only)
 
     public func securityReport() async throws -> SecurityReport
     public func exposedPorts(includeLocalOnly: Bool = false) async throws -> ExposedPorts
@@ -467,6 +467,8 @@ public enum RoamSwitchClientError: Error, LocalizedError, Sendable, Equatable {
     case processLaunchFailed(underlying: Error)
     case noResponse
     case timedOut
+    case untrustedExecutable          // app/binary not signed by the RoamSwitch Team ID; not launched
+    case invalidArgument(String)      // hours outside 1...168 or limit outside 1...200
     case invalidResponse(raw: String)
     case toolError(message: String)
 }
