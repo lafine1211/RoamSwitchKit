@@ -8,14 +8,14 @@ import XCTest
 /// package computes. Environments without RoamSwitch installed (e.g. CI)
 /// skip rather than fail.
 final class RoamSwitchClientTests: XCTestCase {
-    private func makeClientOrSkip() throws -> RoamSwitchClient {
+    private func makeClientOrSkip(timeout: TimeInterval? = nil) throws -> RoamSwitchClient {
         // Xcodeのデバッグビルドを使いたい場合は、環境変数でバイナリのパスを指定する。
         let debugDerivedBinary = ProcessInfo.processInfo.environment["ROAMSWITCH_MCP_SERVER_BINARY"] ?? ""
         if !debugDerivedBinary.isEmpty, FileManager.default.isExecutableFile(atPath: debugDerivedBinary) {
-            return try RoamSwitchClient(executableURL: URL(fileURLWithPath: debugDerivedBinary), verifySignature: false)
+            return try RoamSwitchClient(executableURL: URL(fileURLWithPath: debugDerivedBinary), timeout: timeout, verifySignature: false)
         }
         do {
-            return try RoamSwitchClient()
+            return try RoamSwitchClient(timeout: timeout)
         } catch RoamSwitchClientError.appNotInstalled, RoamSwitchClientError.serverBinaryNotFound {
             throw XCTSkip("RoamSwitch 1.3.0+ isn't installed on this machine — skipping integration test.")
         }
@@ -126,7 +126,9 @@ final class RoamSwitchClientTests: XCTestCase {
     }
 
     func testActiveVulnScan() async throws {
-        let client = try makeClientOrSkip()
+        // 実機の待受ポートを実際に走査する統合テスト。ポートが多いマシンでは既定の120秒(重い呼び出し)を
+        // 超えるため、このテストだけ余裕のある上限を明示する。
+        let client = try makeClientOrSkip(timeout: 600)
         let result = try await client.activeVulnScan()
         // Off by default: an un-opted-in machine must report no findings.
         if !result.enabled {
