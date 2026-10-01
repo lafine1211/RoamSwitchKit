@@ -7,6 +7,27 @@ import Foundation
 // since RoamSwitchKit is a separate public repo and can't depend on the
 // private RoamSwitch app target.
 
+/// A list the server may omit entirely (older server builds, or a field added later):
+/// decodes to `[]` instead of failing the whole response.
+@propertyWrapper
+public struct DefaultEmpty<Element: Codable & Equatable & Sendable>: Codable, Equatable, Sendable {
+    public var wrappedValue: [Element]
+    public init(wrappedValue: [Element] = []) { self.wrappedValue = wrappedValue }
+    public init(from decoder: Decoder) throws {
+        wrappedValue = (try? decoder.singleValueContainer().decode([Element].self)) ?? []
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(wrappedValue)
+    }
+}
+
+extension KeyedDecodingContainer {
+    func decode<E>(_ type: DefaultEmpty<E>.Type, forKey key: Key) throws -> DefaultEmpty<E> {
+        try decodeIfPresent(type, forKey: key) ?? DefaultEmpty()
+    }
+}
+
 public struct SecurityAuditItem: Codable, Equatable, Sendable {
     public let category: String
     public let title: String
@@ -34,7 +55,7 @@ public struct SecurityReport: Codable, Equatable, Sendable {
     public let totalChecks: Int
     public let passedChecks: Int
     public let items: [SecurityAuditItem]
-    public let caveats: [String]
+    @DefaultEmpty public private(set) var caveats: [String]
     public let timestamp: String
 }
 
@@ -53,7 +74,7 @@ public struct ExposedPort: Codable, Equatable, Sendable {
     public let executablePath: String?
     public let auditPerformed: Bool
     public let overallRisk: String?
-    public let findings: [PortFinding]
+    @DefaultEmpty public private(set) var findings: [PortFinding]
     public let httpHeaders: [String: String]?
 }
 
@@ -78,7 +99,7 @@ public struct GuardStatus: Codable, Equatable, Sendable {
     public let activeSecurityLevelLabel: String
     public let isCurrentNetworkTrusted: Bool
     public let guards: [GuardEntry]
-    public let caveats: [String]
+    @DefaultEmpty public private(set) var caveats: [String]
     /// `"off"` | `"warn"` (pause and ask; blocked if unanswered) | `"block"`.
     public let linkGuardMode: String?
     /// `"wireguard"` | `"tailscale"`.
@@ -107,12 +128,12 @@ public struct LinkRiskFactor: Codable, Equatable, Sendable {
 public struct LinkAuditReport: Codable, Equatable, Sendable {
     public let originalURL: String
     public let finalURL: String
-    public let redirectChain: [String]
+    @DefaultEmpty public private(set) var redirectChain: [String]
     public let domain: String
     public let score: Int
     public let riskLevel: String
     public let isHTTPS: Bool
-    public let riskFactors: [LinkRiskFactor]
+    @DefaultEmpty public private(set) var riskFactors: [LinkRiskFactor]
 }
 
 public struct SecurityLogEvent: Codable, Equatable, Sendable {
@@ -209,7 +230,7 @@ public struct SecurityLogAudit: Codable, Equatable, Sendable {
     public let xprotectDetections: Int
     public let isClean: Bool
     public let events: [SecurityLogEvent]
-    public let templateAnomalies: [TemplateAnomaly]
+    @DefaultEmpty public private(set) var templateAnomalies: [TemplateAnomaly]
 }
 
 public struct CanaryIncident: Codable, Equatable, Sendable {
@@ -217,7 +238,7 @@ public struct CanaryIncident: Codable, Equatable, Sendable {
     public let fileName: String
     public let detectedAction: String
     public let suspectedProcess: String?
-    public let affectedFilePaths: [String]
+    @DefaultEmpty public private(set) var affectedFilePaths: [String]
 }
 
 /// `recentIncidentsAvailable` is `true` whenever the Ransomware Canary Guard
@@ -243,7 +264,7 @@ public struct PortAnomalyIncident: Codable, Equatable, Sendable {
 public struct PortAnomalyIncidentsSummary: Codable, Equatable, Sendable {
     public let isEnabled: Bool
     public let baselineCaptured: Bool
-    public let autoIsolatedPorts: [Int]
+    @DefaultEmpty public private(set) var autoIsolatedPorts: [Int]
     public let incidents: [PortAnomalyIncident]
 }
 
@@ -327,7 +348,7 @@ public struct KnowledgeItem: Codable, Equatable, Sendable {
     public let summary: String
     public let details: String
     public let recommendation: String?
-    public let tags: [String]
+    @DefaultEmpty public private(set) var tags: [String]
 }
 
 public struct AppHelpResult: Codable, Equatable, Sendable {
@@ -370,7 +391,7 @@ public struct IncidentTimeline: Codable, Equatable, Sendable {
     public let unresolvedCount: Int
     /// Newest first.
     public let events: [IncidentTimelineEvent]
-    public let caveats: [String]
+    @DefaultEmpty public private(set) var caveats: [String]
 }
 
 // MARK: - get_network_history
@@ -397,7 +418,7 @@ public struct NetworkHistory: Codable, Equatable, Sendable {
     /// Most recently seen first, capped by the requested limit.
     public let networks: [KnownNetwork]
     public let lookalikePairs: [LookalikeNetworkPair]
-    public let caveats: [String]
+    @DefaultEmpty public private(set) var caveats: [String]
 }
 
 // MARK: - resources/list, resources/read

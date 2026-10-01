@@ -10,6 +10,10 @@ import Security
 /// app to a root-owned location (/Applications) closes it.
 enum CodeSignatureVerifier {
     static let teamID = "GV76B6G4YU"
+    /// Signing identifier of the bundled `RoamSwitchMCPServer`: pinning it keeps any other
+    /// binary of the same team (a different RoamSwitch tool, an unrelated team app) from being
+    /// launched in its place.
+    static let serverIdentifierRequirement = "identifier \"com.tetsuharu.RoamSwitch.MCPServer\""
 
     /// - Parameter extraRequirement: additional code-requirement clause, e.g.
     ///   `identifier "com.tetsuharu.RoamSwitch"`.

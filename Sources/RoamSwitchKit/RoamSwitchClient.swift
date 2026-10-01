@@ -16,6 +16,9 @@ import AppKit
 public actor RoamSwitchClient {
     private let executableURL: URL
     private let timeout: TimeInterval
+    /// True when the caller passed a `timeout`: heavy tools then honor it as given
+    /// (even if shorter than the 120 s default ceiling).
+    private let timeoutIsExplicit: Bool
 
     /// Serializes the blocking subprocess exchange and, crucially, keeps it
     /// off the Swift Concurrency cooperative thread pool — a security scan can
@@ -28,11 +31,13 @@ public actor RoamSwitchClient {
     /// one so a wedged server fails fast.
     private enum TimeoutClass {
         case light, normal, heavy
-        func effective(_ base: TimeInterval) -> TimeInterval {
+        func effective(_ base: TimeInterval, explicit: Bool) -> TimeInterval {
             switch self {
             case .light: return min(base, 15)
             case .normal: return base
-            case .heavy: return max(base, 120)
+            // An explicit caller timeout (even a short one) is never overridden; the 120 s
+            // ceiling only replaces the default baseline.
+            case .heavy: return explicit ? base : max(base, 120)
             }
         }
     }
@@ -45,35 +50,36 @@ public actor RoamSwitchClient {
     ///   - appBundleID: RoamSwitch's bundle identifier. Only override this for
     ///     testing against a differently-identified build. The resolved app
     ///     and its helper must still be signed by the RoamSwitch Team ID.
-    ///   - timeout: Baseline wall-clock ceiling for a single call (heavy scans
-    ///     use at least 120 s, light local reads at most 15 s). On expiry the
-    ///     server and its child processes are killed and the call throws
-    ///     `RoamSwitchClientError.timedOut`. Defaults to 30 seconds.
+    ///   - timeout: Wall-clock ceiling for a single call. When omitted the
+    ///     baseline is 30 seconds, heavy scans use at least 120 s and light
+    ///     local reads at most 15 s; a value you pass is honored as given by
+    ///     heavy scans too. On expiry the server and its child processes are
+    ///     killed and the call throws `RoamSwitchClientError.timedOut`.
     ///   - allowEnvironmentOverride: Opt in to honoring the
-    ///     `ROAMSWITCH_SERVER_PATH` environment variable. Always honored in
-    ///     DEBUG builds; ignored otherwise unless this is `true`. The override
-    ///     binary is signature-verified except in DEBUG builds.
+    ///     `ROAMSWITCH_SERVER_PATH` environment variable. Off by default in
+    ///     every build configuration (DEBUG included): an environment variable
+    ///     must not be able to redirect a host app to another binary unless the
+    ///     host asked for it. The override binary must pass the same signature
+    ///     check as the installed one.
+    ///   - allowUnsignedOverride: Only with `allowEnvironmentOverride`: skip the
+    ///     signature check for the override binary (local development builds).
     /// - Throws: `RoamSwitchClientError.appNotInstalled` if no app with this
     ///   bundle ID is registered with Launch Services,
     ///   `.serverBinaryNotFound` if the app is installed but predates 1.3.0,
     ///   or `.untrustedExecutable` if no candidate passes signature checks.
     public init(appBundleID: String = "com.tetsuharu.RoamSwitch",
-                timeout: TimeInterval = 30,
-                allowEnvironmentOverride: Bool = false) throws {
-        self.timeout = timeout
+                timeout: TimeInterval? = nil,
+                allowEnvironmentOverride: Bool = false,
+                allowUnsignedOverride: Bool = false) throws {
+        self.timeout = timeout ?? 30
+        self.timeoutIsExplicit = timeout != nil
 
-        #if DEBUG
-        let envOverrideAllowed = true
-        let skipVerification = true
-        #else
-        let envOverrideAllowed = allowEnvironmentOverride
-        let skipVerification = false
-        #endif
-        if envOverrideAllowed,
+        let skipVerification = allowEnvironmentOverride && allowUnsignedOverride
+        if allowEnvironmentOverride,
            let envPath = ProcessInfo.processInfo.environment["ROAMSWITCH_SERVER_PATH"],
            FileManager.default.isExecutableFile(atPath: envPath) {
             let url = URL(fileURLWithPath: envPath)
-            if !skipVerification, !CodeSignatureVerifier.isSignedByRoamSwitch(at: url) {
+            if !skipVerification, !CodeSignatureVerifier.isSignedByRoamSwitch(at: url, extraRequirement: CodeSignatureVerifier.serverIdentifierRequirement) {
                 throw RoamSwitchClientError.untrustedExecutable
             }
             self.executableURL = url
@@ -102,7 +108,7 @@ public actor RoamSwitchClient {
                 continue
             }
             let appOK = CodeSignatureVerifier.isSignedByRoamSwitch(at: appURL, extraRequirement: "identifier \"\(appBundleID)\"")
-            let helperOK = CodeSignatureVerifier.isSignedByRoamSwitch(at: binaryURL)
+            let helperOK = CodeSignatureVerifier.isSignedByRoamSwitch(at: binaryURL, extraRequirement: CodeSignatureVerifier.serverIdentifierRequirement)
             if appOK && helperOK {
                 chosen = binaryURL
                 break
@@ -122,15 +128,16 @@ public actor RoamSwitchClient {
     ///   signed by the RoamSwitch Team ID, otherwise
     ///   `RoamSwitchClientError.untrustedExecutable` is thrown. Pass `false`
     ///   only for tests / local development builds.
-    public init(executableURL: URL, timeout: TimeInterval = 30, verifySignature: Bool = true) throws {
+    public init(executableURL: URL, timeout: TimeInterval? = nil, verifySignature: Bool = true) throws {
         guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
             throw RoamSwitchClientError.serverBinaryNotFound
         }
-        if verifySignature, !CodeSignatureVerifier.isSignedByRoamSwitch(at: executableURL) {
+        if verifySignature, !CodeSignatureVerifier.isSignedByRoamSwitch(at: executableURL, extraRequirement: CodeSignatureVerifier.serverIdentifierRequirement) {
             throw RoamSwitchClientError.untrustedExecutable
         }
         self.executableURL = executableURL
-        self.timeout = timeout
+        self.timeout = timeout ?? 30
+        self.timeoutIsExplicit = timeout != nil
     }
 
     /// Runs RoamSwitch's full local Mac security audit (FileVault, SIP,
@@ -343,7 +350,7 @@ public actor RoamSwitchClient {
         as type: T.Type
     ) async throws -> T {
         let executableURL = self.executableURL
-        let timeout = TimeoutClass.light.effective(self.timeout)
+        let timeout = TimeoutClass.light.effective(self.timeout, explicit: self.timeoutIsExplicit)
         let queue = self.transportQueue
         return try await withCheckedThrowingContinuation { continuation in
             queue.async {
@@ -364,7 +371,7 @@ public actor RoamSwitchClient {
         as type: T.Type
     ) async throws -> T {
         let executableURL = self.executableURL
-        let timeout = Self.timeoutClass(forTool: name).effective(self.timeout)
+        let timeout = Self.timeoutClass(forTool: name).effective(self.timeout, explicit: self.timeoutIsExplicit)
         let queue = self.transportQueue
         return try await withCheckedThrowingContinuation { continuation in
             queue.async {

@@ -350,4 +350,31 @@ final class RoamSwitchClientTests: XCTestCase {
         ])
         XCTAssertEqual(read.contents.first?.text, "# Features")
     }
+
+    func testChildEnvironmentDropsDyldAndUnknownVariables() {
+        let env = JSONRPCTransport.childEnvironment(from: [
+            "PATH": "/usr/bin", "HOME": "/Users/x", "LC_ALL": "C", "LANG": "en_US.UTF-8",
+            "DYLD_INSERT_LIBRARIES": "/tmp/evil.dylib", "DYLD_LIBRARY_PATH": "/tmp", "HTTPS_PROXY": "http://p", "AWS_SECRET_ACCESS_KEY": "x",
+        ])
+        XCTAssertEqual(Set(env.keys), ["PATH", "HOME", "LC_ALL", "LANG"])
+    }
+
+    func testEnvironmentOverrideIsIgnoredUnlessRequestedEvenInDebug() {
+        setenv("ROAMSWITCH_SERVER_PATH", "/usr/bin/false", 1)
+        defer { unsetenv("ROAMSWITCH_SERVER_PATH") }
+        // Not requested: falls through to Launch Services (unknown bundle ID -> appNotInstalled).
+        XCTAssertThrowsError(try RoamSwitchClient(appBundleID: "com.example.definitely-not-a-real-app")) {
+            XCTAssertEqual($0 as? RoamSwitchClientError, .appNotInstalled)
+        }
+        // Requested: the (unsigned) override is rejected by the signature check.
+        XCTAssertThrowsError(try RoamSwitchClient(appBundleID: "com.example.definitely-not-a-real-app", allowEnvironmentOverride: true)) {
+            XCTAssertEqual($0 as? RoamSwitchClientError, .untrustedExecutable)
+        }
+    }
+
+    func testModelsDecodeWhenOmittedListsAreMissing() throws {
+        let json = #"{"activeSecurityLevel":"a","activeSecurityLevelLabel":"A","isCurrentNetworkTrusted":true,"guards":[]}"#
+        let g = try JSONDecoder().decode(GuardStatus.self, from: Data(json.utf8))
+        XCTAssertEqual(g.caveats, [])
+    }
 }

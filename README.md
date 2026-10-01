@@ -188,8 +188,8 @@ This is stateless by design: no persistent connection, no daemon, nothing left r
 
 ```swift
 public actor RoamSwitchClient {
-    public init(appBundleID: String = "com.tetsuharu.RoamSwitch", timeout: TimeInterval = 30) throws
-    public init(executableURL: URL, timeout: TimeInterval = 30) throws
+    public init(appBundleID: String = "com.tetsuharu.RoamSwitch", timeout: TimeInterval? = nil) throws
+    public init(executableURL: URL, timeout: TimeInterval? = nil) throws
 
     public func securityReport() async throws -> SecurityReport
     public func exposedPorts(includeLocalOnly: Bool = false) async throws -> ExposedPorts
@@ -216,7 +216,7 @@ public actor RoamSwitchClient {
 
 - `init(appBundleID:timeout:)` — resolves and validates the RoamSwitch install. Override `appBundleID` only for testing against a differently-identified build.
 - `init(executableURL:timeout:)` — directly targets a specific `RoamSwitchMCPServer` binary (useful for debugging, testing, or non-standard install paths).
-- `timeout` — per-call wall-clock ceiling (default 30s). On expiry the subprocess is terminated and the call throws `.timedOut`. The blocking exchange runs off the Swift Concurrency cooperative pool, so it won't stall other `async` work.
+- `timeout` — per-call wall-clock ceiling (default 30s; heavy scans use at least 120s unless you pass your own value, which is then honored as given). On expiry the subprocess is terminated and the call throws `.timedOut`. The blocking exchange runs off the Swift Concurrency cooperative pool, so it won't stall other `async` work.
 - `securityReport()` — runs RoamSwitch's full local Mac security audit.
 - `exposedPorts(includeLocalOnly:)` — lists listening TCP ports. Ports exposed beyond localhost are always fully audited; pass `includeLocalOnly: true` to also include localhost-only ports (returned without the slower per-port audit).
 - `guardStatus()` — current active security level, trusted-network status, and each optional guard's on/off state.

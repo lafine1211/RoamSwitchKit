@@ -10,6 +10,16 @@ import Foundation
 /// responsible for running `callTool` off the Swift Concurrency cooperative
 /// pool so a slow scan can't stall unrelated `async` work.
 struct JSONRPCTransport: Sendable {
+    /// Variables the server may legitimately need (user dir, locale, temp dir). Everything else
+    /// -- notably `DYLD_*`, `LD_*`, proxy and credential variables of the host -- is not passed on.
+    static let allowedEnvironment: Set<String> = [
+        "PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "SHELL", "LANG", "TZ", "__CF_USER_TEXT_ENCODING",
+    ]
+
+    static func childEnvironment(from env: [String: String]) -> [String: String] {
+        env.filter { allowedEnvironment.contains($0.key) || $0.key.hasPrefix("LC_") }
+    }
+
     let executableURL: URL
     /// Wall-clock ceiling for the whole exchange. If the server hasn't
     /// answered by then it is terminated and `callTool` throws `.timedOut`,
@@ -187,7 +197,7 @@ struct JSONRPCTransport: Sendable {
         posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
 
         let argv: [UnsafeMutablePointer<CChar>?] = [strdup(executablePath), nil]
-        var envp: [UnsafeMutablePointer<CChar>?] = ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") }
+        var envp: [UnsafeMutablePointer<CChar>?] = Self.childEnvironment(from: ProcessInfo.processInfo.environment).map { strdup("\($0.key)=\($0.value)") }
         envp.append(nil)
         defer {
             for p in argv { free(p) }
