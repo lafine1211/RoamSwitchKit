@@ -12,7 +12,7 @@ import AppKit
 /// can do that.
 ///
 /// Requires RoamSwitch 1.3.0 or later to be installed — see
-/// https://lafine.net.
+/// https://roamswitch.com.
 public actor RoamSwitchClient {
     private let executableURL: URL
     private let timeout: TimeInterval

@@ -43,7 +43,7 @@ public enum RoamSwitchClientError: Error, LocalizedError, Sendable, Equatable {
     public var errorDescription: String? {
         switch self {
         case .appNotInstalled:
-            return "RoamSwitch.app isn't installed. RoamSwitchKit reads live diagnostics from the running app and can't function without it — see https://lafine.net to install."
+            return "RoamSwitch.app isn't installed. RoamSwitchKit reads live diagnostics from the running app and can't function without it — see https://roamswitch.com to install."
         case .serverBinaryNotFound:
             return "RoamSwitch.app is installed but doesn't include RoamSwitchMCPServer. Update to RoamSwitch 1.3.0 or later."
         case .untrustedExecutable:
