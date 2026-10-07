@@ -2,16 +2,16 @@
 
 [English](README.md) | **日本語**
 
-[RoamSwitch](https://lafine.net) がローカルで計算した Mac のネットワークセキュリティ診断結果を
+[RoamSwitch](https://roamswitch.com) がローカルで計算した Mac のネットワークセキュリティ診断結果を
 読み取るための、読み取り専用 Swift クライアントです。
 
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange)](https://swift.org)
-[![Platform](https://img.shields.io/badge/platform-macOS%2012%2B-lightgrey)](https://lafine.net)
+[![Platform](https://img.shields.io/badge/platform-macOS%2012%2B-lightgrey)](https://roamswitch.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## RoamSwitch とは
 
-[**RoamSwitch**](https://lafine.net) は、Mac のネットワーク境界を自動で防衛する macOS 用
+[**RoamSwitch**](https://roamswitch.com) は、Mac のネットワーク境界を自動で防衛する macOS 用
 メニューバーアプリです。カフェの Wi-Fi、カンファレンス会場のネットワーク、あるいは明示的に
 信頼登録していないネットワークに接続した瞬間に、ファイアウォールを締め、ARP スプーフィングを
 監視し、`0.0.0.0` で待ち受けたままの開発サーバーやデータベースを検出して警告します。
@@ -35,7 +35,7 @@
 
 RoamSwitch はこれと同じデータを、同梱の読み取り専用 MCP サーバー経由で AI アシスタント
 （Claude Desktop、Claude Code、その他 [MCP](https://modelcontextprotocol.io) 対応クライアント）
-にも提供しています（設定方法は [lafine.net/mcp-setup](https://lafine.net/mcp-setup.html)）。
+にも提供しています（設定方法は [roamswitch.com/mcp-setup](https://roamswitch.com/mcp-setup.html)）。
 **RoamSwitchKit は、その同じインターフェースを AI クライアントではなく Swift コードから
 使えるようにしたもの**です。ARP 解析やポートスキャン、Wi-Fi 暗号化判定を自前で再実装すること
 なく、「今このMacのネットワークは安全か？」を RoamSwitch が算出したそのままのデータで
@@ -65,7 +65,7 @@ RoamSwitch はこれと同じデータを、同梱の読み取り専用 MCP サ�
 
 - macOS 12 以降
 - Swift 5.9 以降（Xcode 15 以降）
-- コードを実行するマシンに [RoamSwitch](https://lafine.net) 1.3.0 以降がインストール済みで
+- コードを実行するマシンに [RoamSwitch](https://roamswitch.com) 1.3.0 以降がインストール済みで
   あること（本パッケージが通信する `RoamSwitchMCPServer` バイナリは、このリリースから同梱）。
   より新しいリリースが必要なメソッドもあります（[メソッドごとの必要バージョン](#メソッドごとの必要バージョン)
   参照）。インストール済みアプリが未対応のメソッドを呼ぶと、サーバーが "Unknown tool" を返し

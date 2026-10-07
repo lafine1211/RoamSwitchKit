@@ -2,15 +2,15 @@
 
 **English** | [日本語](README.ja.md)
 
-A read-only Swift client for [RoamSwitch](https://lafine.net)'s local Mac network security diagnostics.
+A read-only Swift client for [RoamSwitch](https://roamswitch.com)'s local Mac network security diagnostics.
 
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange)](https://swift.org)
-[![Platform](https://img.shields.io/badge/platform-macOS%2012%2B-lightgrey)](https://lafine.net)
+[![Platform](https://img.shields.io/badge/platform-macOS%2012%2B-lightgrey)](https://roamswitch.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## What is RoamSwitch?
 
-[**RoamSwitch**](https://lafine.net) is a macOS menu bar app that automatically defends your Mac's network boundary — the moment you join a coffee-shop Wi-Fi, a conference network, or any network you haven't explicitly trusted, it can tighten your firewall, watch for ARP spoofing, and flag dev servers or databases you forgot are listening on `0.0.0.0`. It ships free with a Pro tier for automated, no-click responses (auto-block on new listening ports, auto-containment on detected ARP spoofing, USB storage/Bluetooth guards).
+[**RoamSwitch**](https://roamswitch.com) is a macOS menu bar app that automatically defends your Mac's network boundary — the moment you join a coffee-shop Wi-Fi, a conference network, or any network you haven't explicitly trusted, it can tighten your firewall, watch for ARP spoofing, and flag dev servers or databases you forgot are listening on `0.0.0.0`. It ships free with a Pro tier for automated, no-click responses (auto-block on new listening ports, auto-containment on detected ARP spoofing, USB storage/Bluetooth guards).
 
 Concretely, RoamSwitch continuously computes:
 
@@ -19,7 +19,7 @@ Concretely, RoamSwitch continuously computes:
 - **Exposed ports** — every TCP port listening beyond `localhost`, cross-referenced against a database of commonly-misconfigured services (Redis, MongoDB, Elasticsearch, Docker, Memcached, dev servers like `next dev`/Vite/`python -m http.server`, and local AI inference servers like Ollama:11434, LM Studio:1234, Gradio:7860, vLLM:8000) and probed for risky HTTP responses
 - **An 18-point local security posture score** — FileVault, SIP, Gatekeeper, auto-update, XProtect, firewall state, stealth mode, Wi-Fi encryption, ARP spoofing, gateway ARP pinning, SSH remote login, sudo `NOPASSWD` audit, exposed ports, Web/Mail download protection, DNS threat protection, phishing/link protection, USB & BadUSB guards, and macOS accessory protection
 
-RoamSwitch already exposes this same data to AI assistants (Claude Desktop, Claude Code, and other [MCP](https://modelcontextprotocol.io)-compatible clients) via a bundled read-only MCP server — see [lafine.net/mcp-setup](https://lafine.net/mcp-setup.html). **RoamSwitchKit is the same interface, wrapped for Swift code instead of an AI client**: it lets your own macOS app or script ask "is this Mac's network safe right now?" and get back the exact data RoamSwitch itself computed, without reimplementing ARP inspection, port scanning, or Wi-Fi security checks yourself.
+RoamSwitch already exposes this same data to AI assistants (Claude Desktop, Claude Code, and other [MCP](https://modelcontextprotocol.io)-compatible clients) via a bundled read-only MCP server — see [roamswitch.com/mcp-setup](https://roamswitch.com/mcp-setup.html). **RoamSwitchKit is the same interface, wrapped for Swift code instead of an AI client**: it lets your own macOS app or script ask "is this Mac's network safe right now?" and get back the exact data RoamSwitch itself computed, without reimplementing ARP inspection, port scanning, or Wi-Fi security checks yourself.
 
 Typical uses: a sync app pausing background transfers on an untrusted network, a password manager tightening auto-lock on Open Wi-Fi, a dev-tools app warning when it's about to bind a server on `0.0.0.0`, or a Shortcuts/automation workflow that reacts to network trust changes.
 
@@ -33,7 +33,7 @@ Typical uses: a sync app pausing background transfers on an untrusted network, a
 
 - macOS 12+
 - Swift 5.9+ (Xcode 15+)
-- [RoamSwitch](https://lafine.net) 1.3.0 or later installed on the machine your code runs on (RoamSwitchMCPServer, the binary this package talks to, first shipped in that release). Several methods need a newer release — see [Minimum RoamSwitch version per method](#minimum-roamswitch-version-per-method). Calling a method the installed app doesn't support throws `RoamSwitchClientError.toolError` (the server answers "Unknown tool").
+- [RoamSwitch](https://roamswitch.com) 1.3.0 or later installed on the machine your code runs on (RoamSwitchMCPServer, the binary this package talks to, first shipped in that release). Several methods need a newer release — see [Minimum RoamSwitch version per method](#minimum-roamswitch-version-per-method). Calling a method the installed app doesn't support throws `RoamSwitchClientError.toolError` (the server answers "Unknown tool").
 
 ## Installation
 
