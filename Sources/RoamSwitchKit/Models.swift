@@ -47,6 +47,12 @@ public struct SecurityAuditItem: Codable, Equatable, Sendable {
     /// NIST CSF 2.0 subcategory codes (e.g. `["PR.DS-01"]`). `nil` when
     /// talking to an app version that predates this field.
     public let nistCsf: [String]?
+    /// Language-independent code (`"helper_unavailable"`, `"gateway_unknown"`, `"no_baseline"`,
+    /// `"location_unavailable"`, `"tool_failed"`, `"not_verifiable"`) present only when this check could not be
+    /// measured reliably — the same reason `verifySecurityFindings` reports for an `.inconclusive` verdict.
+    /// When non-`nil`, `isPassed` / `statusText` may look healthy but are NOT a confirmed result.
+    /// `nil` means the check was measured, or the app predates this field (1.10.29).
+    public let inconclusiveReason: String?
 }
 
 public struct SecurityReport: Codable, Equatable, Sendable {
@@ -55,6 +61,65 @@ public struct SecurityReport: Codable, Equatable, Sendable {
     public let totalChecks: Int
     public let passedChecks: Int
     public let items: [SecurityAuditItem]
+    @DefaultEmpty public private(set) var caveats: [String]
+    public let timestamp: String
+}
+
+/// The verdict `verify_security_findings` gives one check. Decoding never fails on
+/// an unrecognized value: a newer app may add verdicts, and those arrive as `.unknown(raw)`.
+public enum SecurityFindingVerdict: Hashable, Sendable, Codable, RawRepresentable {
+    /// The check applies and currently fails.
+    case stillPresent
+    /// The check applies and passes, or by design does not apply (`reason == "not_applicable"`).
+    case resolved
+    /// It could not be measured reliably; this is neither a pass nor a fail.
+    case inconclusive
+    case unknown(String)
+
+    public init(rawValue: String) {
+        switch rawValue {
+        case "stillPresent": self = .stillPresent
+        case "resolved": self = .resolved
+        case "inconclusive": self = .inconclusive
+        default: self = .unknown(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .stillPresent: return "stillPresent"
+        case .resolved: return "resolved"
+        case .inconclusive: return "inconclusive"
+        case .unknown(let raw): return raw
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(rawValue)
+    }
+}
+
+/// One re-checked finding. Match on `checkId`, `verdict` and `reason` (all language-independent);
+/// `title`, `statusText` and `detail` are localized to RoamSwitch's UI language.
+public struct VerifiedSecurityFinding: Codable, Equatable, Sendable {
+    public let checkId: String
+    public let title: String
+    public let verdict: SecurityFindingVerdict
+    /// A language-independent code, e.g. `"failing"`, `"passing"`, `"not_applicable"`,
+    /// `"helper_unavailable"`, `"gateway_unknown"`, `"no_baseline"`, `"location_unavailable"`,
+    /// `"unknown_check_id"`, `"not_verifiable"`, `"tool_failed"`. Treat the set as open-ended.
+    public let reason: String
+    public let statusText: String
+    public let detail: String
+}
+
+public struct VerifySecurityFindingsResult: Codable, Equatable, Sendable {
+    public let results: [VerifiedSecurityFinding]
     @DefaultEmpty public private(set) var caveats: [String]
     public let timestamp: String
 }

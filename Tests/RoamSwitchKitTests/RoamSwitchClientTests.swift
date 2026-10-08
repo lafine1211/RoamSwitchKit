@@ -118,11 +118,35 @@ final class RoamSwitchClientTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(result.findings.count, 0)
     }
 
+    /// 実機の状態(登録済みフォルダの有無・検出されるCVEの有無)には依存しない。確認するのは次の2点だけ。
+    /// 1. 空リスト = 「登録済みの全フォルダ」。成功すれば件数が1〜50で、各検出が形として整っている。
+    ///    登録フォルダが1つもない環境ではツールがエラーを返すので、それも許容する。
+    /// 2. `watchedFolders` が実際に効いていること。登録されていないパスを渡すと拒否される。
     func testPackageCveScanLanguages() async throws {
         let client = try makeClientOrSkip()
-        let result = try await client.packageCveScanLanguages(watchedFolders: [])
-        XCTAssertEqual(result.scannedFolderCount, 0)
-        XCTAssertTrue(result.findings.isEmpty)
+
+        do {
+            let all = try await client.packageCveScanLanguages(watchedFolders: [])
+            XCTAssertGreaterThanOrEqual(all.scannedFolderCount, 1)
+            XCTAssertLessThanOrEqual(all.scannedFolderCount, 50)
+            for finding in all.findings {
+                XCTAssertFalse(finding.ecosystem.isEmpty)
+                XCTAssertFalse(finding.cveId.isEmpty)
+                XCTAssertFalse(finding.package.isEmpty)
+                XCTAssertGreaterThanOrEqual(finding.cvssScore, 0)
+                XCTAssertLessThanOrEqual(finding.cvssScore, 10)
+            }
+        } catch RoamSwitchClientError.toolError {
+            // 登録済みのプロジェクトフォルダがない環境。
+        }
+
+        let unregistered = "/private/var/empty/roamswitchkit-not-a-registered-folder-\(UUID().uuidString)"
+        do {
+            _ = try await client.packageCveScanLanguages(watchedFolders: [unregistered])
+            XCTFail("a path outside every registered project folder must be rejected")
+        } catch RoamSwitchClientError.toolError {
+            // 期待どおり。引数が無視されて「全フォルダ」を走査していたら、ここには来ない。
+        }
     }
 
     func testActiveVulnScan() async throws {
@@ -304,6 +328,15 @@ final class RoamSwitchClientTests: XCTestCase {
         XCTAssertNil(report.items.first?.checkId)
         XCTAssertNil(report.items.first?.cisControl)
         XCTAssertNil(report.items.first?.nistCsf)
+        XCTAssertNil(report.items.first?.inconclusiveReason)
+    }
+
+    /// `inconclusiveReason` is optional on the wire: present only for a check that could not be measured.
+    func testSecurityReportItemDecodesInconclusiveReason() throws {
+        let json = #"{"score":90,"grade":"A","totalChecks":2,"passedChecks":2,"items":[{"category":"c","title":"t","isPassed":true,"statusText":"ok","detail":"d","recommendation":"r","settingsURL":null,"isApplicable":true,"checkId":"wifi_encryption_strength","nistCsf":[],"inconclusiveReason":"location_unavailable"},{"category":"c","title":"t","isPassed":true,"statusText":"ok","detail":"d","recommendation":"r","settingsURL":null,"isApplicable":true,"checkId":"luks_encryption","nistCsf":[]}],"caveats":[],"timestamp":"2026-10-08T00:00:00Z"}"#
+        let report = try JSONRPCTransport.decodeContent(SecurityReport.self, from: toolResult(json))
+        XCTAssertEqual(report.items[0].inconclusiveReason, "location_unavailable")
+        XCTAssertNil(report.items[1].inconclusiveReason)
     }
 
     func testSecurityReportItemDecodesComplianceFields() throws {
@@ -312,6 +345,80 @@ final class RoamSwitchClientTests: XCTestCase {
         XCTAssertEqual(report.items.first?.checkId, "luks_encryption")
         XCTAssertEqual(report.items.first?.cisControl, "3.11")
         XCTAssertEqual(report.items.first?.nistCsf, ["PR.DS-01"])
+    }
+
+    func testVerifySecurityFindingsResultDecodes() throws {
+        let json = #"{"results":[{"checkId":"host_firewall","title":"t","verdict":"stillPresent","reason":"failing","statusText":"s","detail":"d"},{"checkId":"sudo_hygiene","title":"t","verdict":"inconclusive","reason":"helper_unavailable","statusText":"s","detail":"d"},{"checkId":"ssh_hardening","title":"t","verdict":"resolved","reason":"not_applicable","statusText":"s","detail":"d"}],"caveats":["c"],"timestamp":"2026-10-07T00:00:00Z"}"#
+        let result = try JSONRPCTransport.decodeContent(VerifySecurityFindingsResult.self, from: toolResult(json))
+        XCTAssertEqual(result.results.map(\.verdict), [.stillPresent, .inconclusive, .resolved])
+        XCTAssertEqual(result.results[1].reason, "helper_unavailable")
+        XCTAssertEqual(result.caveats, ["c"])
+    }
+
+    /// A newer app may add verdicts or leave out `caveats`: neither may fail the whole decode.
+    func testVerifySecurityFindingsResultToleratesUnknownVerdictAndMissingCaveats() throws {
+        let json = #"{"results":[{"checkId":"a","title":"t","verdict":"deferred","reason":"r","statusText":"s","detail":"d"}],"timestamp":"2026-10-07T00:00:00Z"}"#
+        let result = try JSONRPCTransport.decodeContent(VerifySecurityFindingsResult.self, from: toolResult(json))
+        XCTAssertEqual(result.results.first?.verdict, .unknown("deferred"))
+        XCTAssertEqual(result.results.first?.verdict.rawValue, "deferred")
+        XCTAssertEqual(result.caveats, [])
+    }
+
+    func testVerdictRoundTripsThroughJSON() throws {
+        for verdict in [SecurityFindingVerdict.stillPresent, .resolved, .inconclusive, .unknown("x")] {
+            let data = try JSONEncoder().encode([verdict])
+            XCTAssertEqual(try JSONDecoder().decode([SecurityFindingVerdict].self, from: data), [verdict])
+        }
+    }
+
+    /// The 50-id limit counts distinct ids (the app removes duplicates first), so 60 ids that collapse
+    /// to 5 must not be rejected as too many. `/usr/bin/false` fails later, at the handshake, not as `.invalidArgument`.
+    func testVerifySecurityFindingsLimitCountsDistinctIds() async throws {
+        let client = try RoamSwitchClient(executableURL: URL(fileURLWithPath: "/usr/bin/false"), verifySignature: false)
+        let padded = (0..<60).map { "id\($0 % 5)" }
+        do {
+            _ = try await client.verifySecurityFindings(checkIds: padded)
+            XCTFail("expected the stub binary to fail")
+        } catch let error as RoamSwitchClientError {
+            if case .invalidArgument = error { XCTFail("duplicates must not count toward the limit: \(error)") }
+        }
+        // 50 distinct ids + their duplicates is still within the limit; 51 distinct is not.
+        let fifty = (0..<50).map { "id\($0)" }
+        do {
+            _ = try await client.verifySecurityFindings(checkIds: fifty + fifty)
+            XCTFail("expected the stub binary to fail")
+        } catch let error as RoamSwitchClientError {
+            if case .invalidArgument = error { XCTFail("50 distinct ids are allowed: \(error)") }
+        }
+        do {
+            _ = try await client.verifySecurityFindings(checkIds: fifty + ["one-more"] + fifty)
+            XCTFail("expected invalidArgument")
+        } catch let error as RoamSwitchClientError {
+            guard case .invalidArgument = error else { return XCTFail("wrong error: \(error)") }
+        }
+    }
+
+    func testVerifySecurityFindingsRejectsTooManyIdsBeforeLaunchingAnything() async throws {
+        let client = try RoamSwitchClient(executableURL: URL(fileURLWithPath: "/usr/bin/false"), verifySignature: false)
+        do {
+            _ = try await client.verifySecurityFindings(checkIds: (0..<51).map { "id\($0)" })
+            XCTFail("expected invalidArgument")
+        } catch let error as RoamSwitchClientError {
+            guard case .invalidArgument = error else { return XCTFail("wrong error: \(error)") }
+        }
+    }
+
+    func testVerifySecurityFindings() async throws {
+        let client = try makeClientOrSkip()
+        let result: VerifySecurityFindingsResult
+        do {
+            result = try await client.verifySecurityFindings(checkIds: ["host_firewall", "definitely_not_a_check"])
+        } catch RoamSwitchClientError.toolError {
+            throw XCTSkip("the installed RoamSwitch predates verify_security_findings (1.10.29)")
+        }
+        XCTAssertEqual(result.results.map(\.checkId), ["host_firewall", "definitely_not_a_check"])
+        XCTAssertEqual(result.results.last?.verdict, .inconclusive)
+        XCTAssertEqual(result.results.last?.reason, "unknown_check_id")
     }
 
     func testLinkRiskFactorKindIsOptional() throws {

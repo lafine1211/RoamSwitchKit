@@ -34,6 +34,7 @@ public actor RoamSwitchClient {
     public init(executableURL: URL, timeout: TimeInterval = 30, verifySignature: Bool = true) throws   // binary must be signed by the RoamSwitch Team ID unless verifySignature: false (tests only)
 
     public func securityReport() async throws -> SecurityReport
+    public func verifySecurityFindings(checkIds: [String]? = nil) async throws -> VerifySecurityFindingsResult   // nil = all items; at most 50 ids
     public func exposedPorts(includeLocalOnly: Bool = false) async throws -> ExposedPorts
     public func guardStatus() async throws -> GuardStatus
     public func auditURLSafety(url: String) async throws -> LinkAuditReport
@@ -69,6 +70,7 @@ public actor RoamSwitchClient {
 | Optional `GuardStatus`/`GuardEntry` fields added in 1.9.25, `LinkRiskFactor.kind` | 1.9.25+ (`nil` on older apps — never force-unwrap) |
 | `ActiveVulnScanResult.confirmedSafe`/`.inconclusive` (`ScanCheckOutcome`) | 1.9.28+ (`nil` on older apps — never force-unwrap) |
 | `SecurityAuditItem.checkId`/`.cisControl`/`.nistCsf` | 1.10.0+ (`nil` on older apps — never force-unwrap) |
+| `verifySecurityFindings`, `SecurityAuditItem.inconclusiveReason` | 1.10.29+ |
 
 `timeout` is a per-call wall-clock ceiling (default 30s). If RoamSwitchMCPServer
 doesn't answer in time it is terminated and the call throws
@@ -106,8 +108,45 @@ public struct SecurityAuditItem: Codable, Equatable, Sendable {
     public let checkId: String?         // e.g. "luks_encryption"; nil before 1.10.0
     public let cisControl: String?      // CIS Controls v8 safeguard number when confident; nil = no mapping or older app
     public let nistCsf: [String]?       // NIST CSF 2.0 subcategory codes, e.g. ["PR.DS-01"]; nil before 1.10.0
+    public let inconclusiveReason: String?  // 1.10.29+. Non-nil = this check could not be measured reliably (helper_unavailable / gateway_unknown / no_baseline / location_unavailable / tool_failed / not_verifiable): isPassed/statusText may look healthy but are NOT confirmed. Same reason verifySecurityFindings gives for .inconclusive. nil = measured (or older app).
 }
 ```
+
+### `VerifySecurityFindingsResult` (RoamSwitch 1.10.29+)
+
+Read-only re-check of findings from `securityReport()`. Match on `checkId` / `verdict` / `reason`; `title`, `statusText` and `detail` are localized.
+
+```swift
+public struct VerifySecurityFindingsResult: Codable, Equatable, Sendable {
+    public let results: [VerifiedSecurityFinding]   // requested order (all items when checkIds is nil)
+    public let caveats: [String]
+    public let timestamp: String                    // ISO 8601
+}
+
+public struct VerifiedSecurityFinding: Codable, Equatable, Sendable {
+    public let checkId: String
+    public let title: String
+    public let verdict: SecurityFindingVerdict
+    public let reason: String                       // "failing" | "passing" | "not_applicable" | "helper_unavailable" | "gateway_unknown" | "no_baseline" | "location_unavailable" | "unknown_check_id" | "not_verifiable" | "tool_failed" | "not_measured" (open-ended)
+    public let statusText: String
+    public let detail: String
+}
+
+public enum SecurityFindingVerdict: Hashable, Sendable, Codable {
+    case stillPresent      // applies and fails
+    case resolved          // applies and passes, or by design does not apply (reason "not_applicable")
+    case inconclusive      // could not be measured reliably: neither a pass nor a fail
+    case unknown(String)   // a verdict a newer app added
+}
+```
+
+An unknown `checkId` is `.inconclusive` with reason `"unknown_check_id"`, not an error. `.inconclusive` must never be reported to a user as "fixed".
+
+`checkIds`: `nil` or an empty array = every item; duplicates are removed first and the limit of 50 applies to the distinct ids (the app does the same).
+
+Items decided by RoamSwitch's own settings (`host_firewall`, `network_stealth_mode`, `gateway_arp_lock`, `malware_scanning`, `dns_threat_guard`, `usb_zero_trust`) reflect those in-app settings, not a re-measurement of the OS state: fixing something at the OS level does not change their verdict. On a network whose protection level is trusted (open), `host_firewall` / `network_stealth_mode` are `.resolved` with reason `"not_applicable"`, which does not mean the macOS firewall was changed. `arp_spoof_monitor` is only `.resolved` when the gateway MAC matches a registered trusted network; otherwise it is `.inconclusive` / `"no_baseline"`. Reasons also include `"not_measured"` (not measured yet).
+
+The call contacts no external host (the only MCP tool that does is the opt-in `run_npm_audit_signatures`). To read the default gateway's MAC address, `securityReport()`, `verifySecurityFindings()`, `exposedPorts()` and `guardStatus()` may send one ICMP ping to the gateway on the LAN.
 
 ### `ExposedPorts`
 

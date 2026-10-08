@@ -26,7 +26,7 @@ Typical uses: a sync app pausing background transfers on an untrusted network, a
 ## Design principles
 
 - **Read-only, always.** RoamSwitchKit can query RoamSwitch's current diagnostics. It has no API to change RoamSwitch's security level, toggle lockdown, isolate a port, or eject a device — that surface simply doesn't exist in this package. Any app linking RoamSwitchKit has no way to alter another user's protection state; only RoamSwitch's own UI, driven by the user, can do that. This is a deliberate scope limit, not a v1 gap: giving third-party code write access to a security tool's protections would undermine the trust model for everyone.
-- **Fully local, zero telemetry.** Every call launches RoamSwitch's bundled `RoamSwitchMCPServer` binary as a subprocess and talks to it over stdio. There are no network requests anywhere in this package's code — nothing is sent anywhere, by RoamSwitchKit or by RoamSwitch itself.
+- **Fully local, zero telemetry.** Every call launches RoamSwitch's bundled `RoamSwitchMCPServer` binary as a subprocess and talks to it over stdio. There are no network requests anywhere in this package's code, and none of the calls below contacts an external host. Two calls reach beyond this process on the Mac only: `activeVulnScan()` probes `127.0.0.1` (opt-in), and `securityReport()` / `verifySecurityFindings()` / `exposedPorts()` / `guardStatus()` may send one ICMP ping to the default gateway on the LAN to look up its MAC address.
 - **No new attack surface.** RoamSwitchKit doesn't open a socket, register a service, or listen for anything. It spawns a process, writes a request to its stdin, reads one response from its stdout, and lets the process exit.
 
 ## Requirements
@@ -192,6 +192,7 @@ public actor RoamSwitchClient {
     public init(executableURL: URL, timeout: TimeInterval? = nil) throws
 
     public func securityReport() async throws -> SecurityReport
+    public func verifySecurityFindings(checkIds: [String]? = nil) async throws -> VerifySecurityFindingsResult
     public func exposedPorts(includeLocalOnly: Bool = false) async throws -> ExposedPorts
     public func guardStatus() async throws -> GuardStatus
     public func auditURLSafety(url: String) async throws -> LinkAuditReport
@@ -218,6 +219,7 @@ public actor RoamSwitchClient {
 - `init(executableURL:timeout:)` — directly targets a specific `RoamSwitchMCPServer` binary (useful for debugging, testing, or non-standard install paths).
 - `timeout` — per-call wall-clock ceiling (default 30s; heavy scans use at least 120s unless you pass your own value, which is then honored as given). On expiry the subprocess is terminated and the call throws `.timedOut`. The blocking exchange runs off the Swift Concurrency cooperative pool, so it won't stall other `async` work.
 - `securityReport()` — runs RoamSwitch's full local Mac security audit.
+- `verifySecurityFindings(checkIds:)` — re-checks right now whether findings from `securityReport()` are still present (read-only: changes nothing and contacts no external host; it may send one ICMP ping to the default gateway on the LAN to read its MAC address). Each result is `.stillPresent`, `.resolved` or `.inconclusive` (could not be measured reliably, e.g. the privileged helper is not connected) with a language-independent `reason` code; `nil` or an empty array verifies every item, duplicates are removed and at most 50 distinct ids are accepted, and an unknown id comes back `.inconclusive` / `"unknown_check_id"`. Never treat `.inconclusive` as "fixed". Items decided by RoamSwitch's own settings (`host_firewall`, `network_stealth_mode`, `gateway_arp_lock`, `malware_scanning`, `dns_threat_guard`, `usb_zero_trust`) reflect those in-app settings, not a re-measurement of the OS state: fixing something at the OS level does not change their verdict.
 - `exposedPorts(includeLocalOnly:)` — lists listening TCP ports. Ports exposed beyond localhost are always fully audited; pass `includeLocalOnly: true` to also include localhost-only ports (returned without the slower per-port audit).
 - `guardStatus()` — current active security level, trusted-network status, and each optional guard's on/off state.
 - `auditURLSafety(url:)` — analyzes an email link or web URL for phishing threats, Unicode homograph spoofing, brand subdomain deception, and high-risk TLDs (Zero Telemetry).
@@ -249,6 +251,7 @@ public actor RoamSwitchClient {
 | Extended `GuardStatus` fields (`usingDefault`, `linkGuardMode`, `vpnBackend`, …) and `LinkRiskFactor.kind` | 1.9.25+ (older apps leave them `nil`) |
 | `ActiveVulnScanResult.confirmedSafe` / `.inconclusive` (`ScanCheckOutcome`) | 1.9.28+ (older apps leave them `nil`) |
 | `SecurityAuditItem.checkId` / `.cisControl` / `.nistCsf` | 1.10.0+ (older apps leave them `nil`) |
+| `verifySecurityFindings(checkIds:)`, `SecurityAuditItem.inconclusiveReason` | 1.10.29+ |
 
 ### `SecurityReport`
 
@@ -261,7 +264,7 @@ public actor RoamSwitchClient {
 | `items` | `[SecurityAuditItem]` | One entry per check |
 | `caveats` | `[String]` | Notes on anything this tool couldn't fully verify (e.g. Wi-Fi SSID unreadable without Location Services permission, which a bare CLI process can't hold) |
 
-`SecurityAuditItem`: `category`, `title`, `isPassed: Bool`, `statusText`, `detail`, `recommendation`, `settingsURL: String?`, `isApplicable: Bool`, `checkId: String?` (stable machine identifier, e.g. `"luks_encryption"`; `nil` before 1.10.0), `cisControl: String?` (a CIS Controls v8 safeguard number when confidently mappable; `nil` also just means "no confident mapping"), `nistCsf: [String]?` (NIST CSF 2.0 subcategory codes, e.g. `["PR.DS-01"]`; same "confident or omit" policy).
+`SecurityAuditItem`: `category`, `title`, `isPassed: Bool`, `statusText`, `detail`, `recommendation`, `settingsURL: String?`, `isApplicable: Bool`, `checkId: String?` (stable machine identifier, e.g. `"luks_encryption"`; `nil` before 1.10.0), `cisControl: String?` (a CIS Controls v8 safeguard number when confidently mappable; `nil` also just means "no confident mapping"), `nistCsf: [String]?` (NIST CSF 2.0 subcategory codes, e.g. `["PR.DS-01"]`; same "confident or omit" policy), `inconclusiveReason: String?` (1.10.29+; a language-independent code such as `"no_baseline"` or `"location_unavailable"`, present only when the check could not be measured reliably. Then `isPassed` / `statusText` can look healthy but are not a confirmed result, exactly like an `.inconclusive` verdict from `verifySecurityFindings`; `nil` = measured, or an older app).
 
 ### `ExposedPorts`
 

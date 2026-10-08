@@ -55,8 +55,11 @@ RoamSwitch はこれと同じデータを、同梱の読み取り専用 MCP サ�
   与えることは、全ユーザーの信頼モデルを損なうためです。
 - **完全ローカル・ゼロテレメトリ。** 各呼び出しは RoamSwitch 同梱の `RoamSwitchMCPServer`
   バイナリをサブプロセスとして起動し、stdio で通信します。このパッケージのコードには
-  ネットワークリクエストが 1 つもありません。RoamSwitchKit も RoamSwitch 本体も、何も
-  送信しません。
+  ネットワークリクエストが 1 つもなく、以下の呼び出しはどれも外部のホストへ通信しません。
+  この Mac の中で外へ出るのは、`activeVulnScan()`（`127.0.0.1` へのプローブ。オプトイン）と、
+  デフォルトゲートウェイの MAC アドレスを調べるために LAN 内のゲートウェイへ ICMP ping を 1 発
+  送ることがある `securityReport()` / `verifySecurityFindings()` / `exposedPorts()` /
+  `guardStatus()` だけです。
 - **新たな攻撃面を作らない。** RoamSwitchKit はソケットを開かず、サービスを登録せず、何も
   待ち受けません。プロセスを起動し、stdin にリクエストを書き、stdout から 1 件のレスポンスを
   読み、プロセスを終了させるだけです。
@@ -239,6 +242,7 @@ public actor RoamSwitchClient {
     public init(executableURL: URL, timeout: TimeInterval = 30) throws
 
     public func securityReport() async throws -> SecurityReport
+    public func verifySecurityFindings(checkIds: [String]? = nil) async throws -> VerifySecurityFindingsResult
     public func exposedPorts(includeLocalOnly: Bool = false) async throws -> ExposedPorts
     public func guardStatus() async throws -> GuardStatus
     public func auditURLSafety(url: String) async throws -> LinkAuditReport
@@ -269,6 +273,7 @@ public actor RoamSwitchClient {
   `.timedOut` を投げます。ブロッキングするやり取りは Swift Concurrency の協調プールの外で
   実行されるため、他の `async` 処理を止めません。
 - `securityReport()` — Mac のローカルセキュリティ総合診断（18 項目）を実行します。
+- `verifySecurityFindings(checkIds:)` — `securityReport()` の指摘が今も残っているかを、その場で再確認します（読み取り専用。設定は変えず、外部のホストにも出ません。デフォルトゲートウェイの MAC アドレスを調べるため、LAN 内のゲートウェイに ICMP ping を 1 発送ることがあります）。各結果は `.stillPresent`、`.resolved`、`.inconclusive`（特権ヘルパー未接続など、確実には測れなかった）のいずれかで、言語に依存しない `reason` コードが付きます。`nil` または空配列なら全項目、重複は除いたうえで指定は最大 50 件（重複除去後の件数）で、未知の id は `.inconclusive` / `"unknown_check_id"` で返ります。`.inconclusive` を「修正済み」と扱わないでください。設定値ベースの項目（`host_firewall`、`network_stealth_mode`、`gateway_arp_lock`、`malware_scanning`、`dns_threat_guard`、`usb_zero_trust`）はアプリ内設定の反映であり、OS の実状態の再測定ではありません。OS 側を直しても判定は変わりません。
 - `exposedPorts(includeLocalOnly:)` — 待ち受け中の TCP ポートを列挙します。localhost を超えて
   公開されているものは常に完全監査されます。`includeLocalOnly: true` を渡すと localhost 限定
   ポートも含めます（こちらは時間のかかる個別監査なしで返ります）。
@@ -328,6 +333,7 @@ public actor RoamSwitchClient {
 | `GuardStatus` の拡張フィールド（`usingDefault`、`linkGuardMode`、`vpnBackend` など）と `LinkRiskFactor.kind` | 1.9.25 以降（それより前のアプリでは `nil`） |
 | `ActiveVulnScanResult.confirmedSafe` / `.inconclusive`（`ScanCheckOutcome`） | 1.9.28 以降（それより前のアプリでは `nil`） |
 | `SecurityAuditItem.checkId` / `.cisControl` / `.nistCsf` | 1.10.0 以降（それより前のアプリでは `nil`） |
+| `verifySecurityFindings(checkIds:)`、`SecurityAuditItem.inconclusiveReason` | 1.10.29 以降 |
 
 ### `SecurityReport`
 
@@ -340,7 +346,7 @@ public actor RoamSwitchClient {
 | `items` | `[SecurityAuditItem]` | 項目ごとの結果 |
 | `caveats` | `[String]` | このツールで完全には確認できなかった点の注記（例: 位置情報の権限を持てない単体 CLI プロセスでは Wi-Fi の SSID を読めない） |
 
-`SecurityAuditItem`: `category`、`title`、`isPassed: Bool`、`statusText`、`detail`、`recommendation`、`settingsURL: String?`、`isApplicable: Bool`、`checkId: String?`（安定した機械可読識別子。例: `"luks_encryption"`。1.10.0 より前は `nil`）、`cisControl: String?`（確信を持ってマッピングできる場合の CIS Controls v8 セーフガード番号。`nil` は「マッピング無し」または旧バージョンのいずれか）、`nistCsf: [String]?`（NIST CSF 2.0 サブカテゴリコード。例: `["PR.DS-01"]`。同じ「確信があるものだけ・不明なら省略」方針）。
+`SecurityAuditItem`: `category`、`title`、`isPassed: Bool`、`statusText`、`detail`、`recommendation`、`settingsURL: String?`、`isApplicable: Bool`、`checkId: String?`（安定した機械可読識別子。例: `"luks_encryption"`。1.10.0 より前は `nil`）、`cisControl: String?`（確信を持ってマッピングできる場合の CIS Controls v8 セーフガード番号。`nil` は「マッピング無し」または旧バージョンのいずれか）、`nistCsf: [String]?`（NIST CSF 2.0 サブカテゴリコード。例: `["PR.DS-01"]`。同じ「確信があるものだけ・不明なら省略」方針）、`inconclusiveReason: String?`（1.10.29 以降。`"no_baseline"` や `"location_unavailable"` のような言語非依存コード。確実には測れなかった項目にだけ付きます。付いているとき `isPassed` / `statusText` は正常に見えても確認済みではなく、`verifySecurityFindings` の `.inconclusive` と同じ扱いです。`nil` は測定できている、または旧バージョン）。
 
 ### `ExposedPorts`
 

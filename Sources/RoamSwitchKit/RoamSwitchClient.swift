@@ -45,6 +45,7 @@ public actor RoamSwitchClient {
     /// Server-side limits (kept in sync with RoamSwitchMCPServer).
     private static let maxLogHours = 168
     private static let maxListLimit = 200
+    private static let maxVerifyCheckIds = 50
 
     /// - Parameters:
     ///   - appBundleID: RoamSwitch's bundle identifier. Only override this for
@@ -145,6 +146,40 @@ public actor RoamSwitchClient {
     /// spoofing, exposed ports) and returns a scored report.
     public func securityReport() async throws -> SecurityReport {
         try await call("get_security_report", arguments: [:], as: SecurityReport.self)
+    }
+
+    /// Re-checks right now whether findings from `securityReport()` are still
+    /// present. Read-only: it changes no setting and fixes nothing. The app
+    /// re-evaluates every check and filters by `checkIds`.
+    ///
+    /// Each result is `.stillPresent`, `.resolved` or `.inconclusive` (could not be
+    /// measured reliably, e.g. the privileged helper is not connected, or there is no
+    /// ARP baseline yet), with a language-independent `reason`. An unknown id yields
+    /// `.inconclusive` with reason `"unknown_check_id"` rather than throwing.
+    /// Requires RoamSwitch 1.10.29 or later.
+    ///
+    /// - Parameter checkIds: `checkId` values from `securityReport()`. `nil` or an
+    ///   empty array (the default is `nil`) verifies every item. Duplicates are removed
+    ///   first, and the limit of 50 ids per call applies to the distinct ids.
+    ///
+    /// Items decided by RoamSwitch's own settings (`host_firewall`, `network_stealth_mode`,
+    /// `gateway_arp_lock`, `malware_scanning`, `dns_threat_guard`, `usb_zero_trust`) reflect those
+    /// in-app settings, not a re-measurement of the OS state: fixing something at the OS level does
+    /// not change their verdict.
+    ///
+    /// The call contacts no external host; to read the default gateway's MAC address it may send
+    /// one ICMP ping to the gateway on the LAN.
+    public func verifySecurityFindings(checkIds: [String]? = nil) async throws -> VerifySecurityFindingsResult {
+        var arguments: [String: Any] = [:]
+        if let checkIds {
+            var seen = Set<String>()
+            let distinct = checkIds.filter { seen.insert($0).inserted }
+            guard distinct.count <= Self.maxVerifyCheckIds else {
+                throw RoamSwitchClientError.invalidArgument("checkIds must contain at most \(Self.maxVerifyCheckIds) distinct ids")
+            }
+            arguments["checkIds"] = distinct
+        }
+        return try await call("verify_security_findings", arguments: arguments, as: VerifySecurityFindingsResult.self)
     }
 
     /// Lists every TCP port currently listening on this Mac and, for each
@@ -334,7 +369,7 @@ public actor RoamSwitchClient {
 
     private static func timeoutClass(forTool name: String) -> TimeoutClass {
         switch name {
-        case "get_security_report", "run_active_vuln_scan", "run_package_cve_scan",
+        case "get_security_report", "verify_security_findings", "run_active_vuln_scan", "run_package_cve_scan",
              "run_package_cve_scan_languages", "audit_security_logs", "audit_secrets":
             return .heavy
         case "get_exposed_ports":
