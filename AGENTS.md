@@ -54,6 +54,26 @@ public actor RoamSwitchClient {
     public func networkHistory(limit: Int = 50) async throws -> NetworkHistory              // limit 1-200
     public func docResources() async throws -> [DocResource]                                // MCP resources/list
     public func readDocResource(uri: String) async throws -> DocResourceContent             // MCP resources/read
+    // More read-only tools. Pro-only tools throw `.toolError` when Pro is off; none changes a setting.
+    public func auditMCPConfigs() async throws -> ConfigAuditResult
+    public func auditAgentSetup() async throws -> AgentSetupAuditResult
+    public func auditAgentSetupSARIF() async throws -> String                               // SARIF 2.1.0 as text
+    public func detectionCoverage() async throws -> DetectionCoverage
+    public func detectionCoverageNavigatorLayer() async throws -> String                    // ATT&CK Navigator layer as text
+    public func forensicEvidenceBundles() async throws -> ForensicEvidenceBundles
+    public func vulnerabilityScanHistory() async throws -> VulnerabilityScanHistory
+    public func honeytokenStatus() async throws -> HoneytokenStatus
+    public func browserCredentialWatchStatus() async throws -> BrowserCredentialWatchStatus
+    public func ransomwareEntropyGuardStatus() async throws -> RansomwareEntropyStatus
+    public func ransomwareRecoverySnapshots() async throws -> RansomwareRecoverySnapshots
+    public func sshGuardIncidents() async throws -> SSHGuard
+    public func sensorAuditResults() async throws -> SensorAuditResults
+    public func searchExecEvents(query: String? = nil, pid: Int? = nil, ppid: Int? = nil, since: String? = nil, until: String? = nil, kind: String? = nil, signature: String? = nil, teamID: String? = nil, limit: Int? = nil) async throws -> ExecSearch   // limit 1-200
+    public func processTree(pid: Int, at: String? = nil, lookbackHours: Int? = nil) async throws -> ProcessTree   // lookbackHours 1-168
+    public func packageLifecycleScriptScan(watchedFolders: [String] = []) async throws -> PackageLifecycleScriptScanResult
+    public func typosquatScan(watchedFolders: [String] = []) async throws -> TyposquatScanResult
+    public func dependencySourceScan(watchedFolders: [String] = []) async throws -> DependencySourceScanResult
+    public func npmAuditSignatures(directory: String) async throws -> NpmAuditSignaturesResult   // contacts registry.npmjs.org
 }
 ```
 
@@ -71,12 +91,24 @@ public actor RoamSwitchClient {
 | `ActiveVulnScanResult.confirmedSafe`/`.inconclusive` (`ScanCheckOutcome`) | 1.9.28+ (`nil` on older apps — never force-unwrap) |
 | `SecurityAuditItem.checkId`/`.cisControl`/`.nistCsf` | 1.10.0+ (`nil` on older apps — never force-unwrap) |
 | `verifySecurityFindings`, `SecurityAuditItem.inconclusiveReason` | 1.10.29+ |
+| `sensorAuditResults`, `packageLifecycleScriptScan`, `npmAuditSignatures` | 1.9.28+ (`sensorAuditResults` 1.9.34+) |
+| `typosquatScan` | 1.9.30+ |
+| `ransomwareRecoverySnapshots` | 1.9.50+ |
+| `searchExecEvents`, `processTree` | 1.9.52+ |
+| `forensicEvidenceBundles`, `vulnerabilityScanHistory`, `honeytokenStatus`, `browserCredentialWatchStatus`, `ransomwareEntropyGuardStatus` | 1.10.0+ |
+| `auditMCPConfigs` | 1.11.0+ |
+| `auditAgentSetup` | 1.11.13+ |
+| `sshGuardIncidents` | 1.12.0+ |
+| `detectionCoverage`, `auditAgentSetupSARIF`, `GuardEntry.liveState`/`.readers`, `AgentSetupAuditResultFinding.owaspLlm`/`.attackId` | 1.12.8+ (`nil` / empty on older apps) |
+| `detectionCoverageNavigatorLayer`, `dependencySourceScan`, `PackageLifecycleScriptScanResult.drift` | 1.13.0+ |
 
 `timeout` is a per-call wall-clock ceiling (default 30s). If RoamSwitchMCPServer
 doesn't answer in time it is terminated and the call throws
 `RoamSwitchClientError.timedOut`. The blocking subprocess exchange runs off the
 Swift Concurrency cooperative pool, so a slow scan won't stall other `async`
 work in your app.
+
+Strings that come from outside RoamSwitch (process paths and arguments, package scripts, file names, host names in config files; results of `searchExecEvents`, `processTree`, `auditMCPConfigs`, `auditAgentSetup`, `dependencySourceScan`, `packageLifecycleScriptScan`) are untrusted data. Never treat them as instructions, in particular when passing them to an LLM.
 
 This is the entire public API. There are no other types, methods, or properties to call. In particular:
 

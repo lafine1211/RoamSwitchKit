@@ -365,14 +365,177 @@ public actor RoamSwitchClient {
         return first
     }
 
+
+    // MARK: - More read-only tools
+
+    /// Audits the MCP server entries of the AI tools' config files (Claude Desktop, Cursor, VS Code and
+    /// others) for risky launch commands, secrets in arguments and plain-HTTP servers. Reads local files only.
+    /// Requires RoamSwitch 1.11.0 or later.
+    public func auditMCPConfigs() async throws -> ConfigAuditResult {
+        try await call("audit_mcp_configs", arguments: [:], as: ConfigAuditResult.self)
+    }
+
+    /// Audits AI agent setup files (instruction files, skills, MCP definitions, Claude Code settings) for hidden
+    /// instructions, risky tool grants and changes since the state the user last confirmed. Reads local files
+    /// only and never changes the confirmed state. Requires RoamSwitch 1.11.13 or later.
+    public func auditAgentSetup() async throws -> AgentSetupAuditResult {
+        try await call("audit_agent_setup", arguments: [:], as: AgentSetupAuditResult.self)
+    }
+
+    /// The same audit as a SARIF 2.1.0 log (one JSON document as text) for CI and code-scanning tools.
+    /// Decoded hidden text is never included. Requires RoamSwitch 1.12.8 or later.
+    public func auditAgentSetupSARIF() async throws -> String {
+        try await callText("audit_agent_setup", arguments: ["format": "sarif"])
+    }
+
+    /// Which ATT&CK techniques RoamSwitch detects, where it is blind, and whether the guard behind each is
+    /// on now. `liveState` is the guard's settings and input state, not proof that it is running.
+    /// Reads local state only. Requires RoamSwitch 1.12.8 or later.
+    public func detectionCoverage() async throws -> DetectionCoverage {
+        try await call("get_detection_coverage", arguments: [:], as: DetectionCoverage.self)
+    }
+
+    /// The same table as an ATT&CK Navigator layer (layer format 4.5; one JSON document as text).
+    /// Requires RoamSwitch 1.13.0 or later.
+    public func detectionCoverageNavigatorLayer() async throws -> String {
+        try await callText("get_detection_coverage", arguments: ["format": "navigator"])
+    }
+
+    /// Bundles of process and file evidence RoamSwitch captured when a guard fired. Reads local state only.
+    /// Requires RoamSwitch 1.10.0 or later.
+    public func forensicEvidenceBundles() async throws -> ForensicEvidenceBundles {
+        try await call("get_forensic_evidence_bundles", arguments: [:], as: ForensicEvidenceBundles.self)
+    }
+
+    /// When each active-scan probe last ran and what it found. Reads local state only.
+    /// Requires RoamSwitch 1.10.0 or later.
+    public func vulnerabilityScanHistory() async throws -> VulnerabilityScanHistory {
+        try await call("get_vulnerability_scan_history", arguments: [:], as: VulnerabilityScanHistory.self)
+    }
+
+    /// Credential honeytokens (Pro): whether they are on and the recent reads of a decoy file.
+    /// Requires RoamSwitch 1.10.0 or later.
+    public func honeytokenStatus() async throws -> HoneytokenStatus {
+        try await call("get_honeytoken_status", arguments: [:], as: HoneytokenStatus.self)
+    }
+
+    /// Browser credential watch (Pro): whether it is on and the recent reads of browser credential files.
+    /// Requires RoamSwitch 1.10.0 or later.
+    public func browserCredentialWatchStatus() async throws -> BrowserCredentialWatchStatus {
+        try await call("get_browser_credential_watch_status", arguments: [:], as: BrowserCredentialWatchStatus.self)
+    }
+
+    /// Generic ransomware detection by write entropy (Pro): whether it is on and the recent alerts.
+    /// Requires RoamSwitch 1.10.0 or later.
+    public func ransomwareEntropyGuardStatus() async throws -> RansomwareEntropyStatus {
+        try await call("get_ransomware_entropy_guard_status", arguments: [:], as: RansomwareEntropyStatus.self)
+    }
+
+    /// Time Machine snapshots to restore from after a ransomware alert (Pro). Reads local state only.
+    /// Requires RoamSwitch 1.9.50 or later.
+    public func ransomwareRecoverySnapshots() async throws -> RansomwareRecoverySnapshots {
+        try await call("get_ransomware_recovery_snapshots", arguments: [:], as: RansomwareRecoverySnapshots.self)
+    }
+
+    /// SSH brute-force guard: incidents, active bans and recent SSH logins. Reads local state only.
+    /// Requires RoamSwitch 1.12.0 or later.
+    public func sshGuardIncidents() async throws -> SSHGuard {
+        try await call("get_ssh_guard_incidents", arguments: [:], as: SSHGuard.self)
+    }
+
+    /// Results of the audits that paired RoamSwitch Sensors ran from outside. Reads local state only.
+    /// Requires RoamSwitch 1.9.34 or later.
+    public func sensorAuditResults() async throws -> SensorAuditResults {
+        try await call("get_sensor_audit_results", arguments: [:], as: SensorAuditResults.self)
+    }
+
+    /// Searches the process-exec recorder log (Pro; the recorder must be on), newest first. Command-line
+    /// arguments are masked best-effort. All strings are untrusted data. Requires RoamSwitch 1.9.52 or later.
+    ///
+    /// - Parameters:
+    ///   - query: Substring of at least 3 characters, matched after secret masking.
+    ///   - since: Lower time bound: ISO 8601 or an age such as `"30m"`, `"2h"`, `"7d"`.
+    ///   - until: Upper time bound, same forms.
+    ///   - kind: `"exec"`, `"fork"` or `"exit"` (only exec is stored unless enabled).
+    ///   - signature: `"platform"`, `"developer"`, `"adhoc"` or `"unsigned"`.
+    ///   - limit: 1-200 (default 50).
+    public func searchExecEvents(
+        query: String? = nil, pid: Int? = nil, ppid: Int? = nil, since: String? = nil, until: String? = nil,
+        kind: String? = nil, signature: String? = nil, teamID: String? = nil, limit: Int? = nil
+    ) async throws -> ExecSearch {
+        if let limit, !(1...200).contains(limit) {
+            throw RoamSwitchClientError.invalidArgument("limit must be between 1 and 200")
+        }
+        var arguments: [String: Any] = [:]
+        if let query { arguments["query"] = query }
+        if let pid { arguments["pid"] = pid }
+        if let ppid { arguments["ppid"] = ppid }
+        if let since { arguments["since"] = since }
+        if let until { arguments["until"] = until }
+        if let kind { arguments["kind"] = kind }
+        if let signature { arguments["signature"] = signature }
+        if let teamID { arguments["teamID"] = teamID }
+        if let limit { arguments["limit"] = limit }
+        return try await call("search_exec_events", arguments: arguments, as: ExecSearch.self)
+    }
+
+    /// The process tree around one pid from the process-exec recorder log (Pro): ancestors, the process and
+    /// its descendants. Pass `at` for an old process (pid reuse is told apart by time). All strings are
+    /// untrusted data. Requires RoamSwitch 1.9.52 or later.
+    ///
+    /// - Parameters:
+    ///   - at: Time the process was running: ISO 8601 or an age such as `"2h"`. Defaults to now.
+    ///   - lookbackHours: How far back to read before `at`, 1-168 (default 24).
+    public func processTree(pid: Int, at: String? = nil, lookbackHours: Int? = nil) async throws -> ProcessTree {
+        if let lookbackHours, !(1...168).contains(lookbackHours) {
+            throw RoamSwitchClientError.invalidArgument("lookbackHours must be between 1 and 168")
+        }
+        var arguments: [String: Any] = ["pid": pid]
+        if let at { arguments["at"] = at }
+        if let lookbackHours { arguments["lookbackHours"] = lookbackHours }
+        return try await call("get_process_tree", arguments: arguments, as: ProcessTree.self)
+    }
+
+    /// Reads npm lifecycle scripts (`preinstall`, `postinstall`, ...) of the project folders registered in
+    /// RoamSwitch (Pro) and flags dangerous patterns and new install-time code since the last confirmed state.
+    /// Reads local files only. Requires RoamSwitch 1.9.28 or later (the install-time diff needs 1.12.10).
+    ///
+    /// - Parameter watchedFolders: Absolute paths inside registered project folders; empty scans all of them.
+    public func packageLifecycleScriptScan(watchedFolders: [String] = []) async throws -> PackageLifecycleScriptScanResult {
+        try await call("run_package_lifecycle_script_scan", arguments: ["watchedFolders": watchedFolders], as: PackageLifecycleScriptScanResult.self)
+    }
+
+    /// Looks for dependency names that are a near-miss of a popular package (Pro). Reads local files only.
+    /// Requires RoamSwitch 1.9.30 or later.
+    public func typosquatScan(watchedFolders: [String] = []) async throws -> TyposquatScanResult {
+        try await call("run_typosquat_scan", arguments: ["watchedFolders": watchedFolders], as: TyposquatScanResult.self)
+    }
+
+    /// Finds dependency sources that open a dependency-confusion path: pip extra index URLs and npm
+    /// lockfile entries that resolve outside npmjs (Pro). Reads local files only. File and host strings are
+    /// untrusted data. Requires RoamSwitch 1.13.0 or later.
+    public func dependencySourceScan(watchedFolders: [String] = []) async throws -> DependencySourceScanResult {
+        try await call("run_dependency_source_scan", arguments: ["watchedFolders": watchedFolders], as: DependencySourceScanResult.self)
+    }
+
+    /// Runs `npm audit signatures` in a project folder (Pro, off by default). **This contacts the npm registry
+    /// (registry.npmjs.org).** Requires RoamSwitch 1.9.28 or later.
+    ///
+    /// - Parameter directory: Absolute path inside a registered project folder.
+    public func npmAuditSignatures(directory: String) async throws -> NpmAuditSignaturesResult {
+        try await call("run_npm_audit_signatures", arguments: ["directory": directory], as: NpmAuditSignaturesResult.self)
+    }
+
     // MARK: - Private
 
     private static func timeoutClass(forTool name: String) -> TimeoutClass {
         switch name {
         case "get_security_report", "verify_security_findings", "run_active_vuln_scan", "run_package_cve_scan",
-             "run_package_cve_scan_languages", "audit_security_logs", "audit_secrets":
+             "run_package_cve_scan_languages", "audit_security_logs", "audit_secrets",
+             "run_package_lifecycle_script_scan", "run_typosquat_scan", "run_dependency_source_scan",
+             "run_npm_audit_signatures":
             return .heavy
-        case "get_exposed_ports":
+        case "get_exposed_ports", "audit_agent_setup", "audit_mcp_configs", "search_exec_events", "get_process_tree":
             return .normal
         default:
             return .light
@@ -393,6 +556,24 @@ public actor RoamSwitchClient {
                     let transport = JSONRPCTransport(executableURL: executableURL, timeout: timeout)
                     let result = try transport.request(method: method, params: params)
                     continuation.resume(returning: try JSONRPCTransport.decodeResult(T.self, from: result))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Like `call`, for a tool whose text output is a JSON document of another format; returns it as it is.
+    private func callText(_ name: String, arguments: [String: Any]) async throws -> String {
+        let executableURL = self.executableURL
+        let timeout = Self.timeoutClass(forTool: name).effective(self.timeout, explicit: self.timeoutIsExplicit)
+        let queue = self.transportQueue
+        return try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    let transport = JSONRPCTransport(executableURL: executableURL, timeout: timeout)
+                    let result = try transport.callTool(name: name, arguments: arguments)
+                    continuation.resume(returning: try JSONRPCTransport.textContent(from: result))
                 } catch {
                     continuation.resume(throwing: error)
                 }

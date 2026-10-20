@@ -155,6 +155,34 @@ public struct GuardEntry: Codable, Equatable, Sendable {
     /// `enabledInSettings` is the guard's built-in default. `nil` from
     /// RoamSwitch builds older than 1.9.25.
     public let usingDefault: Bool?
+    /// `"on"` | `"off"` | `"partial"` | `"unknown"`: whether the guard can actually see its input, not just
+    /// whether it is switched on. `nil` before RoamSwitch 1.12.8.
+    public let liveState: String?
+    /// The counted record per input of a guard that reads a stream or files (restarts, gaps, files it
+    /// could not read). `nil` before RoamSwitch 1.12.8, and for guards with no input to check.
+    public let readers: [GuardReaderHealth]?
+}
+
+/// What one input of a guard could not see. A counter above zero means that part was not examined: no
+/// detection then means none in the examined part.
+public struct GuardReaderHealth: Codable, Equatable, Sendable {
+    public let source: String
+    public let unreadable: Bool
+    public let reason: String?
+    public let restarts: Int
+    public let lastRestartAt: String?
+    /// Times the input stopped and what happened before it resumed was not seen (nothing is replayed).
+    public let gaps: Int
+    public let lastGapAt: String?
+    public let linesDropped: UInt64?
+    public let oversizeDropped: UInt64?
+    /// Files the last scan had to skip because they could not be read.
+    public let filesUnreadable: Int?
+    public let filesUnreadableAt: String?
+    /// Folders the last scan could not list, so everything below them was not looked at.
+    public let foldersUnreadable: Int?
+    /// Files of which only the start was read because they are longer than the read limit.
+    public let filesTruncated: Int?
 }
 
 /// Every property after `guards` except `caveats` is optional: RoamSwitch

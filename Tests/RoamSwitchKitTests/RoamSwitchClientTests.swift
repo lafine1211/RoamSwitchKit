@@ -486,4 +486,201 @@ final class RoamSwitchClientTests: XCTestCase {
         let g = try JSONDecoder().decode(GuardStatus.self, from: Data(json.utf8))
         XCTAssertEqual(g.caveats, [])
     }
+
+    // MARK: - More read-only tools (integration: needs the installed app or ROAMSWITCH_MCP_SERVER_BINARY)
+
+    /// Runs `body`; a tool refused because Pro is off, an opt-in is off or a path is not registered
+    /// (`.toolError`) is an expected answer, not a failure.
+    private func expectingResultOrToolError(_ body: () async throws -> Void) async throws {
+        do { try await body() } catch RoamSwitchClientError.toolError { }
+    }
+
+    func testDetectionCoverage() async throws {
+        let client = try makeClientOrSkip()
+        let c = try await client.detectionCoverage()
+        XCTAssertEqual(c.platform, "macos")
+        XCTAssertEqual(c.summary.total, c.techniques.count)
+        XCTAssertEqual(c.summary.detects + c.summary.partial + c.summary.none, c.summary.total)
+        XCTAssertFalse(c.caveats.isEmpty)
+        for t in c.techniques { XCTAssertTrue(["detects", "partial", "none"].contains(t.coverage), t.id) }
+    }
+
+    func testDetectionCoverageNavigatorLayerIsAJSONDocument() async throws {
+        let client = try makeClientOrSkip()
+        try await expectingResultOrToolError {
+            let text = try await client.detectionCoverageNavigatorLayer()
+            let object = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+            XCTAssertNotNil(object?["techniques"])
+        }
+    }
+
+    func testAuditAgentSetupAndItsSARIFForm() async throws {
+        let client = try makeClientOrSkip()
+        let audit = try await client.auditAgentSetup()
+        XCTAssertGreaterThanOrEqual(audit.scannedFileCount, audit.scannedFiles.count > 0 ? 1 : 0)
+        let sarif = try await client.auditAgentSetupSARIF()
+        let object = try JSONSerialization.jsonObject(with: Data(sarif.utf8)) as? [String: Any]
+        XCTAssertEqual(object?["version"] as? String, "2.1.0")
+    }
+
+    func testAuditMCPConfigs() async throws {
+        let client = try makeClientOrSkip()
+        let r = try await client.auditMCPConfigs()
+        XCTAssertGreaterThanOrEqual(r.serverCount, 0)
+    }
+
+    func testLocalStatusReaders() async throws {
+        let client = try makeClientOrSkip()
+        _ = try await client.forensicEvidenceBundles()
+        _ = try await client.vulnerabilityScanHistory()
+        _ = try await client.honeytokenStatus()
+        _ = try await client.browserCredentialWatchStatus()
+        _ = try await client.ransomwareEntropyGuardStatus()
+        _ = try await client.sshGuardIncidents()
+        _ = try await client.sensorAuditResults()
+        try await expectingResultOrToolError { _ = try await client.ransomwareRecoverySnapshots() }
+    }
+
+    func testExecRecorderTools() async throws {
+        let client = try makeClientOrSkip()
+        try await expectingResultOrToolError {
+            let r = try await client.searchExecEvents(limit: 5)
+            XCTAssertLessThanOrEqual(r.events.count, 5)
+        }
+        try await expectingResultOrToolError {
+            let t = try await client.processTree(pid: 1)
+            XCTAssertEqual(t.found, t.process != nil)
+        }
+    }
+
+    func testProjectFolderScans() async throws {
+        let client = try makeClientOrSkip()
+        try await expectingResultOrToolError { _ = try await client.packageLifecycleScriptScan() }
+        try await expectingResultOrToolError { _ = try await client.typosquatScan() }
+        try await expectingResultOrToolError { _ = try await client.dependencySourceScan() }
+    }
+
+    func testNpmAuditSignaturesRefusesAnUnregisteredFolder() async throws {
+        let client = try makeClientOrSkip()
+        do {
+            _ = try await client.npmAuditSignatures(directory: "/nonexistent/\(UUID().uuidString)")
+            XCTFail("an unregistered folder must be refused")
+        } catch RoamSwitchClientError.toolError { }
+    }
+
+    func testExecToolArgumentsAreCheckedBeforeLaunchingAnything() async throws {
+        let client = try RoamSwitchClient(executableURL: URL(fileURLWithPath: "/usr/bin/false"), verifySignature: false)
+        do { _ = try await client.searchExecEvents(limit: 0); XCTFail("limit 0") } catch let e as RoamSwitchClientError {
+            XCTAssertEqual(e, .invalidArgument("limit must be between 1 and 200"))
+        }
+        do { _ = try await client.searchExecEvents(limit: 201); XCTFail("limit 201") } catch let e as RoamSwitchClientError {
+            XCTAssertEqual(e, .invalidArgument("limit must be between 1 and 200"))
+        }
+        do { _ = try await client.processTree(pid: 1, lookbackHours: 169); XCTFail("169 h") } catch let e as RoamSwitchClientError {
+            XCTAssertEqual(e, .invalidArgument("lookbackHours must be between 1 and 168"))
+        }
+    }
+
+    // MARK: - More read-only tools (decoding)
+
+    private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
+        try JSONDecoder().decode(T.self, from: Data(json.utf8))
+    }
+
+    func testDetectionCoverageDecodes() throws {
+        let json = """
+        {"platform":"macos","summary":{"total":2,"detects":1,"partial":0,"none":1,"coveredButOff":0},
+         "techniques":[{"id":"T1543.001","name":"Launch Agent","platform":"macos","coverage":"detects","coveredBy":["persistenceMonitor"],"blindSpot":"x","liveState":"on"},
+                       {"id":"T1055","name":"Process Injection","platform":"macos","coverage":"none","coveredBy":[],"blindSpot":"y","liveState":"not_applicable"}],
+         "guards":[{"id":"persistenceMonitor","state":"on"}],"caveats":["c"]}
+        """
+        let c = try decode(DetectionCoverage.self, json)
+        XCTAssertEqual(c.summary.total, 2)
+        XCTAssertEqual(c.techniques[0].coveredBy, ["persistenceMonitor"])
+        XCTAssertEqual(c.techniques[1].liveState, "not_applicable")
+        XCTAssertEqual(c.guards, [DetectionCoverageGuardState(id: "persistenceMonitor", state: "on")])
+    }
+
+    func testListsTheServerOmitsDecodeToEmpty() throws {
+        let c = try decode(DetectionCoverage.self, #"{"platform":"macos","summary":{"total":0,"detects":0,"partial":0,"none":0,"coveredButOff":0}}"#)
+        XCTAssertTrue(c.techniques.isEmpty && c.guards.isEmpty && c.caveats.isEmpty)
+        let a = try decode(AgentSetupAuditResult.self, #"{"scannedFileCount":0,"skillCount":0,"openClawConfigFound":false}"#)
+        XCTAssertTrue(a.findings.isEmpty && a.scannedFiles.isEmpty)
+        let ssh = try decode(SSHGuard.self, #"{"isEnabled":false,"attackTechnique":"T1110","incidentsNote":"","statusNote":"","sessionsNote":""}"#)
+        XCTAssertTrue(ssh.incidents.isEmpty && ssh.activeBans.isEmpty && ssh.sshPorts.isEmpty)
+    }
+
+    func testAgentSetupFindingDecodesWithAndWithoutTags() throws {
+        let tagged = try decode(AgentSetupAuditResultFinding.self,
+            #"{"id":"hidden_encoded_text","severity":"high","area":"instructions","file":"/a/CLAUDE.md","detail":"d","message":"m","owaspLlm":["LLM01"],"attackId":["T1027"]}"#)
+        XCTAssertEqual(tagged.owaspLlm, ["LLM01"])
+        XCTAssertEqual(tagged.attackId, ["T1027"])
+        let older = try decode(AgentSetupAuditResultFinding.self,
+            #"{"id":"x","severity":"low","area":"a","file":"f","detail":"d","message":"m"}"#)
+        XCTAssertTrue(older.owaspLlm.isEmpty && older.attackId.isEmpty, "findings from an app that predates the tags")
+    }
+
+    func testGuardEntryDecodesLegacyAndLiveStateWithReaders() throws {
+        let legacy = try decode(GuardEntry.self, #"{"key":"sshGuard","enabledInSettings":true,"usingDefault":true}"#)
+        XCTAssertNil(legacy.liveState)
+        XCTAssertNil(legacy.readers)
+        let json = """
+        {"key":"webRulesFolderScan","enabledInSettings":true,"liveState":"partial",
+         "readers":[{"source":"webRuleFolderScan","unreadable":false,"restarts":0,"gaps":0,"filesUnreadable":2,"foldersUnreadable":1,"filesTruncated":3}]}
+        """
+        let e = try decode(GuardEntry.self, json)
+        XCTAssertEqual(e.liveState, "partial")
+        XCTAssertEqual(e.readers?.first?.filesUnreadable, 2)
+        XCTAssertEqual(e.readers?.first?.foldersUnreadable, 1)
+        XCTAssertEqual(e.readers?.first?.filesTruncated, 3)
+        XCTAssertNil(e.readers?.first?.reason)
+    }
+
+    func testExecSearchAndProcessTreeDecode() throws {
+        let recorder = #"{"enabledInSettings":true,"state":"running","stateLabel":"running","eventsRecorded":10,"eventsDropped":0,"malformedLines":0,"alertsRaised":1,"statusUpdatedAt":"2026-10-20T00:00:00Z"}"#
+        let search = try decode(ExecSearch.self, """
+        {"recorder":\(recorder),"logReadable":true,"matched":1,"scanTruncated":false,
+         "events":[{"seq":7,"time":"2026-10-20T00:00:00Z","kind":"exec","pid":42,"ppid":1,"uid":501,"path":"/usr/bin/curl","args":["curl","https://example.com"],"signature":"platform"}],
+         "caveats":["c"]}
+        """)
+        XCTAssertEqual(search.events.first?.path, "/usr/bin/curl")
+        XCTAssertNil(search.events.first?.cdhash)
+        let tree = try decode(ProcessTree.self, """
+        {"recorder":\(recorder),"logReadable":true,"found":false,"truncated":false,"unavailableReason":"no_pro"}
+        """)
+        XCTAssertFalse(tree.found)
+        XCTAssertNil(tree.process)
+        XCTAssertTrue(tree.ancestors.isEmpty && tree.descendants.isEmpty)
+        XCTAssertEqual(tree.unavailableReason, "no_pro")
+    }
+
+    func testProjectScanResultsDecode() throws {
+        let dep = try decode(DependencySourceScanResult.self,
+            #"{"scannedFolderCount":1,"findings":[{"kind":"pip_extra_index","file":"/p/requirements.txt","line":3,"host":"pypi.example.org","packageCount":2}],"note":"n"}"#)
+        XCTAssertEqual(dep.findings.first?.line, 3)
+        XCTAssertNil(dep.findings.first?.scope)
+        let life = try decode(PackageLifecycleScriptScanResult.self, """
+        {"scannedFolderCount":1,"findings":[{"packageName":"p","packageVersion":"1.0.0","scriptName":"postinstall","scriptCommand":"node x.js","relativePath":"node_modules/p/package.json","isDangerPattern":false}],
+         "drift":[{"packageName":"p","newVersion":"1.0.1","kind":"script_added","scriptName":"postinstall","severity":"medium"}]}
+        """)
+        XCTAssertEqual(life.drift.first?.kind, "script_added")
+        XCTAssertNil(life.baselineAcceptedAt)
+        let typo = try decode(TyposquatScanResult.self, #"{"scannedFolderCount":1,"findings":[{"dependencyName":"reacct","suspectedTarget":"react","distance":1}]}"#)
+        XCTAssertEqual(typo.findings.first?.suspectedTarget, "react")
+    }
+
+    func testSmallStatusPayloadsDecode() throws {
+        let honey = try decode(HoneytokenStatus.self, #"{"isEnabled":true,"recentEventsAvailable":true,"recentEvents":[{"timestamp":"t","path":"/h/.aws/credentials","kind":"aws_credentials","suspectedProcess":"cat"}]}"#)
+        XCTAssertEqual(honey.recentEvents.first?.suspectedProcess, "cat")
+        let ent = try decode(RansomwareEntropyStatus.self, #"{"isEnabled":true,"recentAlertsAvailable":true,"recentAlerts":[{"timestamp":"t","processLabel":"p","affectedFilePaths":["/a"],"averageEntropy":7.95}]}"#)
+        XCTAssertEqual(ent.recentAlerts.first?.averageEntropy, 7.95)
+        let ssh = try decode(SSHGuardIncident.self, #"{"timestamp":"t","kind":"banned","source":"203.0.113.5","failureCount":6,"windowSecs":600,"banSecs":3600,"usersTried":["root"]}"#)
+        XCTAssertEqual(ssh.usersTried, ["root"])
+        XCTAssertNil(ssh.session)
+        let sensor = try decode(SensorAuditResults.self, #"{"pairedSensorCount":1,"results":[{"requestId":"r","sensorName":"s","requestedAt":"t","status":"completed","pullAttempts":1,"findings":[]}]}"#)
+        XCTAssertEqual(sensor.results.first?.status, "completed")
+        let npm = try decode(NpmAuditSignaturesResult.self, #"{"enabled":false,"message":"off"}"#)
+        XCTAssertFalse(npm.enabled)
+        XCTAssertNil(npm.exitCode)
+    }
 }

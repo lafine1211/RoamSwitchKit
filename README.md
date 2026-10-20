@@ -237,6 +237,13 @@ public actor RoamSwitchClient {
 - `incidentTimeline(limit:)` — one chronological view (newest first, 1–200 events) across ARP spoofing auto-containment, the Ransomware Canary Guard, Runtime Threat Containment and the Port Anomaly Guard. ARP containment is recorded only here. Reads only local state (works during a network Air-Gap).
 - `networkHistory(limit:)` — the always-on Evil-Twin detector's memory: remembered SSIDs with a gateway-device count and last-seen time (never MAC addresses), plus look-alike SSID pairs that never shared a gateway. Reads only local state.
 - `docResources()` / `readDocResource(uri:)` — lists and reads the bundled `roamswitch://docs/*` Markdown documents (MCP `resources/list` / `resources/read`). An unknown URI throws `.toolError`.
+- `auditMCPConfigs()` — audits the MCP server entries in the AI tools' config files for risky launch commands, secrets in arguments and plain-HTTP servers. Reads local files only. Returns `ConfigAuditResult`.
+- `auditAgentSetup()` / `auditAgentSetupSARIF()` — audits AI agent instruction files, skills, MCP definitions and Claude Code settings for hidden instructions, risky tool grants and changes since the state you last confirmed. Reads local files only and never changes the confirmed state. The SARIF form returns a SARIF 2.1.0 log as text for CI. Each finding carries `owaspLlm` and `attackId` tags.
+- `detectionCoverage()` / `detectionCoverageNavigatorLayer()` — which ATT&CK techniques RoamSwitch detects, where it is blind, and whether the guard behind each is on now (`liveState`: the guard's settings and input state, not proof that it runs). The second form returns an ATT&CK Navigator layer as text.
+- `forensicEvidenceBundles()`, `vulnerabilityScanHistory()`, `honeytokenStatus()`, `browserCredentialWatchStatus()`, `ransomwareEntropyGuardStatus()`, `ransomwareRecoverySnapshots()`, `sshGuardIncidents()`, `sensorAuditResults()` — the local state of those guards and scans. Read-only. Pro-only ones throw `.toolError` when Pro is off.
+- `searchExecEvents(query:pid:ppid:since:until:kind:signature:teamID:limit:)` / `processTree(pid:at:lookbackHours:)` — search the process-exec recorder log (Pro, recorder on) and rebuild the tree around a pid. Arguments are masked best-effort. All strings are untrusted data.
+- `packageLifecycleScriptScan(watchedFolders:)`, `typosquatScan(watchedFolders:)`, `dependencySourceScan(watchedFolders:)` — read the registered project folders (Pro): install-time scripts and new install-time code, near-miss package names, and dependency sources that open a dependency-confusion path. Local files only.
+- `npmAuditSignatures(directory:)` — runs `npm audit signatures` in a registered project folder (Pro, off by default). **Contacts registry.npmjs.org.**
 
 ### Minimum RoamSwitch version per method
 
@@ -252,6 +259,17 @@ public actor RoamSwitchClient {
 | `ActiveVulnScanResult.confirmedSafe` / `.inconclusive` (`ScanCheckOutcome`) | 1.9.28+ (older apps leave them `nil`) |
 | `SecurityAuditItem.checkId` / `.cisControl` / `.nistCsf` | 1.10.0+ (older apps leave them `nil`) |
 | `verifySecurityFindings(checkIds:)`, `SecurityAuditItem.inconclusiveReason` | 1.10.29+ |
+| `sensorAuditResults()` | 1.9.34+ |
+| `packageLifecycleScriptScan(watchedFolders:)`, `npmAuditSignatures(directory:)` | 1.9.28+ |
+| `typosquatScan(watchedFolders:)` | 1.9.30+ |
+| `ransomwareRecoverySnapshots()` | 1.9.50+ |
+| `searchExecEvents(...)`, `processTree(pid:...)` | 1.9.52+ |
+| `forensicEvidenceBundles()`, `vulnerabilityScanHistory()`, `honeytokenStatus()`, `browserCredentialWatchStatus()`, `ransomwareEntropyGuardStatus()` | 1.10.0+ |
+| `auditMCPConfigs()` | 1.11.0+ |
+| `auditAgentSetup()` | 1.11.13+ |
+| `sshGuardIncidents()` | 1.12.0+ |
+| `detectionCoverage()`, `auditAgentSetupSARIF()`, `GuardEntry.liveState` / `.readers`, `AgentSetupAuditResultFinding.owaspLlm` / `.attackId` | 1.12.8+ (older apps leave them `nil` / empty) |
+| `detectionCoverageNavigatorLayer()`, `dependencySourceScan(watchedFolders:)`, `PackageLifecycleScriptScanResult.drift` | 1.13.0+ |
 
 ### `SecurityReport`
 
@@ -294,7 +312,7 @@ public actor RoamSwitchClient {
 | `isolatedDevPorts` | `[Int]?` | Dev-server ports the user isolated from the LAN, ascending. 1.9.25+ |
 | `usbStorageAllowedVolumeCount` | `Int?` | Size of the USB storage allowlist. 1.9.25+ |
 
-`GuardEntry`: `key: String`, `enabledInSettings: Bool`, `usingDefault: Bool?` (`true` = the user never toggled it, so the value is the guard's built-in default; `nil` before 1.9.25).
+`GuardEntry`: `key: String`, `enabledInSettings: Bool`, `usingDefault: Bool?` (`true` = the user never toggled it, so the value is the guard's built-in default; `nil` before 1.9.25). `liveState: String?` (`"on"` / `"off"` / `"partial"` / `"unknown"`: whether the guard can see its input, not only whether it is switched on; 1.12.8+) and `readers: [GuardReaderHealth]?` (per input: `restarts`, `gaps`, `filesUnreadable`, `foldersUnreadable`, `filesTruncated`, …; a counter above zero means that part was not examined, so no detection means none in the examined part).
 
 ### `LinkAuditReport`
 

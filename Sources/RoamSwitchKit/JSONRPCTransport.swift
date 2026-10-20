@@ -164,6 +164,15 @@ struct JSONRPCTransport: Sendable {
         }
     }
 
+    /// The first text block of a tool result as it is (for tools whose output is a JSON document of
+    /// another format, such as SARIF or an ATT&CK Navigator layer).
+    static func textContent(from result: [String: Any]) throws -> String {
+        guard let text = extractText(from: result) else {
+            throw RoamSwitchClientError.invalidResponse(raw: RoamSwitchClientError.truncatedRaw("\(result)"))
+        }
+        return text
+    }
+
     /// Decodes a raw JSON-RPC `result` object (not a tool's text content) —
     /// used for `resources/list` / `resources/read`.
     static func decodeResult<T: Decodable>(_ type: T.Type, from result: [String: Any]) throws -> T {

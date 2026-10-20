@@ -263,6 +263,26 @@ public actor RoamSwitchClient {
     public func networkHistory(limit: Int = 50) async throws -> NetworkHistory
     public func docResources() async throws -> [DocResource]
     public func readDocResource(uri: String) async throws -> DocResourceContent
+    // 読み取り専用のツールの追加分。Pro 限定のものは Pro がオフのとき `.toolError` になります。
+    public func auditMCPConfigs() async throws -> ConfigAuditResult
+    public func auditAgentSetup() async throws -> AgentSetupAuditResult
+    public func auditAgentSetupSARIF() async throws -> String
+    public func detectionCoverage() async throws -> DetectionCoverage
+    public func detectionCoverageNavigatorLayer() async throws -> String
+    public func forensicEvidenceBundles() async throws -> ForensicEvidenceBundles
+    public func vulnerabilityScanHistory() async throws -> VulnerabilityScanHistory
+    public func honeytokenStatus() async throws -> HoneytokenStatus
+    public func browserCredentialWatchStatus() async throws -> BrowserCredentialWatchStatus
+    public func ransomwareEntropyGuardStatus() async throws -> RansomwareEntropyStatus
+    public func ransomwareRecoverySnapshots() async throws -> RansomwareRecoverySnapshots
+    public func sshGuardIncidents() async throws -> SSHGuard
+    public func sensorAuditResults() async throws -> SensorAuditResults
+    public func searchExecEvents(query: String? = nil, pid: Int? = nil, ppid: Int? = nil, since: String? = nil, until: String? = nil, kind: String? = nil, signature: String? = nil, teamID: String? = nil, limit: Int? = nil) async throws -> ExecSearch
+    public func processTree(pid: Int, at: String? = nil, lookbackHours: Int? = nil) async throws -> ProcessTree
+    public func packageLifecycleScriptScan(watchedFolders: [String] = []) async throws -> PackageLifecycleScriptScanResult
+    public func typosquatScan(watchedFolders: [String] = []) async throws -> TyposquatScanResult
+    public func dependencySourceScan(watchedFolders: [String] = []) async throws -> DependencySourceScanResult
+    public func npmAuditSignatures(directory: String) async throws -> NpmAuditSignaturesResult
 }
 ```
 
@@ -320,6 +340,26 @@ public actor RoamSwitchClient {
 - `docResources()` / `readDocResource(uri:)` — 同梱の `roamswitch://docs/*` Markdown
   ドキュメントを一覧・取得します（MCP の `resources/list` / `resources/read`）。存在しない URI は
   `.toolError` になります。
+- `auditMCPConfigs()` — AI ツールの設定ファイルにある MCP サーバーの定義を調べ、危険な起動コマンド、
+  引数の中の秘密情報、平文 HTTP のサーバーを指摘します。ローカルのファイルだけを読みます。`ConfigAuditResult` を返します。
+- `auditAgentSetup()` / `auditAgentSetupSARIF()` — AI エージェントの指示ファイル、スキル、MCP の定義、
+  Claude Code の設定を調べ、隠れた命令、危険なツールの許可、最後に確認した状態からの変更を指摘します。
+  ローカルのファイルだけを読み、確認済みの状態は変えません。SARIF 版は、CI 向けに SARIF 2.1.0 のログをテキストで返します。
+  各指摘に `owaspLlm` と `attackId` のタグが付きます。
+- `detectionCoverage()` / `detectionCoverageNavigatorLayer()` — RoamSwitch が検知できる ATT&CK の手法、見えない部分、
+  担当するガードがいま動いているか(`liveState`。設定と入力の状態で、動作の証明ではありません)を返します。
+  後者は ATT&CK Navigator のレイヤーをテキストで返します。
+- `forensicEvidenceBundles()`、`vulnerabilityScanHistory()`、`honeytokenStatus()`、`browserCredentialWatchStatus()`、
+  `ransomwareEntropyGuardStatus()`、`ransomwareRecoverySnapshots()`、`sshGuardIncidents()`、`sensorAuditResults()` —
+  各ガードと診断のローカルな状態です。読み取り専用で、Pro 限定のものは Pro がオフのとき `.toolError` になります。
+- `searchExecEvents(query:pid:ppid:since:until:kind:signature:teamID:limit:)` / `processTree(pid:at:lookbackHours:)` —
+  プロセス実行の記録(Pro、記録がオン)を検索し、pid を中心にプロセスの木を組み立てます。引数は可能な範囲で伏せ字にします。
+  文字列はすべて信頼できないデータです。
+- `packageLifecycleScriptScan(watchedFolders:)`、`typosquatScan(watchedFolders:)`、`dependencySourceScan(watchedFolders:)` —
+  登録済みのプロジェクトフォルダを読みます(Pro)。インストール時のスクリプトと増えたコード、名前が酷似したパッケージ、
+  取り違え攻撃につながる依存関係の取得元を調べます。ローカルのファイルだけです。
+- `npmAuditSignatures(directory:)` — 登録済みのプロジェクトフォルダで `npm audit signatures` を実行します(Pro、既定はオフ)。
+  **registry.npmjs.org に接続します。**
 
 ### メソッドごとの必要バージョン
 
@@ -335,6 +375,17 @@ public actor RoamSwitchClient {
 | `ActiveVulnScanResult.confirmedSafe` / `.inconclusive`（`ScanCheckOutcome`） | 1.9.28 以降（それより前のアプリでは `nil`） |
 | `SecurityAuditItem.checkId` / `.cisControl` / `.nistCsf` | 1.10.0 以降（それより前のアプリでは `nil`） |
 | `verifySecurityFindings(checkIds:)`、`SecurityAuditItem.inconclusiveReason` | 1.10.29 以降 |
+| `sensorAuditResults()` | 1.9.34 以降 |
+| `packageLifecycleScriptScan(watchedFolders:)`、`npmAuditSignatures(directory:)` | 1.9.28 以降 |
+| `typosquatScan(watchedFolders:)` | 1.9.30 以降 |
+| `ransomwareRecoverySnapshots()` | 1.9.50 以降 |
+| `searchExecEvents(...)`、`processTree(pid:...)` | 1.9.52 以降 |
+| `forensicEvidenceBundles()`、`vulnerabilityScanHistory()`、`honeytokenStatus()`、`browserCredentialWatchStatus()`、`ransomwareEntropyGuardStatus()` | 1.10.0 以降 |
+| `auditMCPConfigs()` | 1.11.0 以降 |
+| `auditAgentSetup()` | 1.11.13 以降 |
+| `sshGuardIncidents()` | 1.12.0 以降 |
+| `detectionCoverage()`、`auditAgentSetupSARIF()`、`GuardEntry.liveState` / `.readers`、`AgentSetupAuditResultFinding.owaspLlm` / `.attackId` | 1.12.8 以降(旧バージョンでは `nil` または空) |
+| `detectionCoverageNavigatorLayer()`、`dependencySourceScan(watchedFolders:)`、`PackageLifecycleScriptScanResult.drift` | 1.13.0 以降 |
 
 ### `SecurityReport`
 
@@ -377,7 +428,7 @@ public actor RoamSwitchClient {
 | `isolatedDevPorts` | `[Int]?` | ユーザーが LAN から隔離した開発サーバーのポート（昇順）。1.9.25 以降 |
 | `usbStorageAllowedVolumeCount` | `Int?` | USB ストレージ許可リストの件数。1.9.25 以降 |
 
-`GuardEntry`: `key: String`、`enabledInSettings: Bool`、`usingDefault: Bool?`（`true` = ユーザーが一度も切り替えておらず、値はそのガードの既定値。1.9.25 より前は `nil`）。
+`GuardEntry`: `key: String`、`enabledInSettings: Bool`、`usingDefault: Bool?`（`true` = ユーザーが一度も切り替えておらず、値はそのガードの既定値。1.9.25 より前は `nil`）。`liveState: String?`（`"on"` / `"off"` / `"partial"` / `"unknown"`。スイッチが入っているかだけでなく、ガードが入力を読めているか。1.12.8 以降）と `readers: [GuardReaderHealth]?`（入力ごとに `restarts`、`gaps`、`filesUnreadable`、`foldersUnreadable`、`filesTruncated` など。0 より大きいときは、その部分を調べておらず、検知なしは調べた範囲に見つからなかったという意味です）。
 
 ### `LinkAuditReport`
 
