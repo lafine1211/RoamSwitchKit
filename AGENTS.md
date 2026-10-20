@@ -4,7 +4,7 @@ Reference for AI coding assistants integrating RoamSwitchKit into a Swift/macOS 
 
 ## What this package is
 
-A read-only Swift client for RoamSwitch (a macOS network-security menu bar app, https://lafine.net). It queries live diagnostics (security posture score, exposed network ports, guard on/off state) from an already-installed RoamSwitch app. It cannot change any RoamSwitch setting — there is no write/mutation API in this package, and none should be invented when generating code against it.
+A Swift client for RoamSwitch (a macOS network-security menu bar app, https://lafine.net). It queries live diagnostics (security posture score, exposed network ports, guard on/off state) from an already-installed RoamSwitch app. It cannot change any RoamSwitch setting — there is no write/mutation API in this package, and none should be invented when generating code against it. Only `auditSecurityLogs` and `activeVulnScan` write anything, and that is RoamSwitch's own record files (log baseline, notification history, scan history).
 
 ## Requirements
 

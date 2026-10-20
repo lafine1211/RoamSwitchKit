@@ -3,7 +3,7 @@
 [English](README.md) | **日本語**
 
 [RoamSwitch](https://roamswitch.com) がローカルで計算した Mac のネットワークセキュリティ診断結果を
-読み取るための、読み取り専用 Swift クライアントです。
+読み取るための Swift クライアントです。設定を変える API はありません。
 
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange)](https://swift.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%2012%2B-lightgrey)](https://roamswitch.com)
@@ -33,7 +33,7 @@
   Web・メールダウンロード保護、DNS 脅威保護、フィッシング・リンク保護、USB / BadUSB ガード、
   macOS アクセサリ接続保護
 
-RoamSwitch はこれと同じデータを、同梱の読み取り専用 MCP サーバー経由で AI アシスタント
+RoamSwitch はこれと同じデータを、同梱の MCP サーバー経由で AI アシスタント
 （Claude Desktop、Claude Code、その他 [MCP](https://modelcontextprotocol.io) 対応クライアント）
 にも提供しています（設定方法は [roamswitch.com/mcp-setup](https://roamswitch.com/mcp-setup.html)）。
 **RoamSwitchKit は、その同じインターフェースを AI クライアントではなく Swift コードから
@@ -47,8 +47,9 @@ RoamSwitch はこれと同じデータを、同梱の読み取り専用 MCP サ�
 
 ## 設計方針
 
-- **常に読み取り専用。** RoamSwitchKit は現在の診断結果を照会できるだけです。保護レベルの変更、
-  ロックダウン切替、ポート隔離、デバイス取り出しを行う API は、このパッケージに一切存在しません。
+- **設定を変えません。** RoamSwitchKit は現在の診断結果を照会します。保護レベルの変更、
+  ロックダウン切替、ポート隔離、デバイス取り出しを行う API は、このパッケージに一切存在しません。書き込みを伴うのは、`auditSecurityLogs(hours:)` と `activeVulnScan()` の2つだけです。
+  どちらも、RoamSwitch が自分の記録ファイル（ログの基準値と通知履歴、診断履歴）を更新するツールを呼び出します。
   RoamSwitchKit をリンクしたアプリが他人の保護状態を変更する手段はなく、それができるのは
   ユーザー自身が操作する RoamSwitch 本体の UI だけです。これは v1 の未実装ではなく意図的な
   スコープ制限です。サードパーティのコードにセキュリティツールの保護設定への書き込み権を

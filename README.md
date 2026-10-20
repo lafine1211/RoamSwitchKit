@@ -2,7 +2,7 @@
 
 **English** | [日本語](README.ja.md)
 
-A read-only Swift client for [RoamSwitch](https://roamswitch.com)'s local Mac network security diagnostics.
+A Swift client for [RoamSwitch](https://roamswitch.com)'s local Mac network security diagnostics. It has no API that changes settings.
 
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange)](https://swift.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%2012%2B-lightgrey)](https://roamswitch.com)
@@ -19,13 +19,13 @@ Concretely, RoamSwitch continuously computes:
 - **Exposed ports** — every TCP port listening beyond `localhost`, cross-referenced against a database of commonly-misconfigured services (Redis, MongoDB, Elasticsearch, Docker, Memcached, dev servers like `next dev`/Vite/`python -m http.server`, and local AI inference servers like Ollama:11434, LM Studio:1234, Gradio:7860, vLLM:8000) and probed for risky HTTP responses
 - **An 18-point local security posture score** — FileVault, SIP, Gatekeeper, auto-update, XProtect, firewall state, stealth mode, Wi-Fi encryption, ARP spoofing, gateway ARP pinning, SSH remote login, sudo `NOPASSWD` audit, exposed ports, Web/Mail download protection, DNS threat protection, phishing/link protection, USB & BadUSB guards, and macOS accessory protection
 
-RoamSwitch already exposes this same data to AI assistants (Claude Desktop, Claude Code, and other [MCP](https://modelcontextprotocol.io)-compatible clients) via a bundled read-only MCP server — see [roamswitch.com/mcp-setup](https://roamswitch.com/mcp-setup.html). **RoamSwitchKit is the same interface, wrapped for Swift code instead of an AI client**: it lets your own macOS app or script ask "is this Mac's network safe right now?" and get back the exact data RoamSwitch itself computed, without reimplementing ARP inspection, port scanning, or Wi-Fi security checks yourself.
+RoamSwitch already exposes this same data to AI assistants (Claude Desktop, Claude Code, and other [MCP](https://modelcontextprotocol.io)-compatible clients) via a bundled MCP server — see [roamswitch.com/mcp-setup](https://roamswitch.com/mcp-setup.html). **RoamSwitchKit is the same interface, wrapped for Swift code instead of an AI client**: it lets your own macOS app or script ask "is this Mac's network safe right now?" and get back the exact data RoamSwitch itself computed, without reimplementing ARP inspection, port scanning, or Wi-Fi security checks yourself.
 
 Typical uses: a sync app pausing background transfers on an untrusted network, a password manager tightening auto-lock on Open Wi-Fi, a dev-tools app warning when it's about to bind a server on `0.0.0.0`, or a Shortcuts/automation workflow that reacts to network trust changes.
 
 ## Design principles
 
-- **Read-only, always.** RoamSwitchKit can query RoamSwitch's current diagnostics. It has no API to change RoamSwitch's security level, toggle lockdown, isolate a port, or eject a device — that surface simply doesn't exist in this package. Any app linking RoamSwitchKit has no way to alter another user's protection state; only RoamSwitch's own UI, driven by the user, can do that. This is a deliberate scope limit, not a v1 gap: giving third-party code write access to a security tool's protections would undermine the trust model for everyone.
+- **Never changes settings.** RoamSwitchKit can query RoamSwitch's current diagnostics. It has no API to change RoamSwitch's security level, toggle lockdown, isolate a port, or eject a device — that surface simply doesn't exist in this package. Only two methods write anything: `auditSecurityLogs(hours:)` and `activeVulnScan()` call tools that update RoamSwitch's own record files (the log baseline and notification history, and the scan history). Any app linking RoamSwitchKit has no way to alter another user's protection state; only RoamSwitch's own UI, driven by the user, can do that. This is a deliberate scope limit, not a v1 gap: giving third-party code write access to a security tool's protections would undermine the trust model for everyone.
 - **Fully local, zero telemetry.** Every call launches RoamSwitch's bundled `RoamSwitchMCPServer` binary as a subprocess and talks to it over stdio. There are no network requests anywhere in this package's code, and none of the calls below contacts an external host. Two calls reach beyond this process on the Mac only: `activeVulnScan()` probes `127.0.0.1` (opt-in), and `securityReport()` / `verifySecurityFindings()` / `exposedPorts()` / `guardStatus()` may send one ICMP ping to the default gateway on the LAN to look up its MAC address.
 - **No new attack surface.** RoamSwitchKit doesn't open a socket, register a service, or listen for anything. It spawns a process, writes a request to its stdin, reads one response from its stdout, and lets the process exit.
 
